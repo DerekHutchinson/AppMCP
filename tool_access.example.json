@@ -1,0 +1,28 @@
+{
+  "roles": {
+    "admin": ["*"],
+    "author": [
+      "list_datasources",
+      "list_schemas",
+      "list_tables",
+      "list_columns",
+      "run_query",
+      "get_authoring_guide",
+      "check_app",
+      "create_app",
+      "update_app",
+      "set_app_access",
+      "preview_app",
+      "publish_app",
+      "unpublish_app",
+      "list_apps",
+      "get_app_url"
+    ],
+    "viewer": []
+  },
+  "users": {
+    "admin@example.com": "admin",
+    "author@example.com": "author"
+  },
+  "default_role": "viewer"
+}

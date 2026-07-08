@@ -1,0 +1,10 @@
+.env
+.env.local
+# Deployment-specific role/user map (contains real user emails). Copy
+# tool_access.example.json to tool_access.json and fill in your users.
+tool_access.json
+*.sqlite
+*.sqlite-*
+data/
+__pycache__/
+*.pyc

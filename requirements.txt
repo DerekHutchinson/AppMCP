@@ -1,0 +1,15 @@
+# Pin to the FastMCP 2.x line. This code targets the 2.x server API
+# (http_app(path=...) + the 2.9+ semantic middleware: on_list_tools/on_call_tool).
+# FastMCP 3.x has breaking changes that break the authenticated MCP handshake on
+# a rebuilt image, so keep the upper bound until the code is ported to 3.x.
+fastmcp>=2.9,<3
+fastapi
+uvicorn[standard]
+asyncpg
+aiomysql
+pymssql
+jinja2
+pydantic-settings
+python-dotenv
+sqlglot
+httpx
