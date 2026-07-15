@@ -13,3 +13,6 @@ pydantic-settings
 python-dotenv
 sqlglot
 httpx
+cryptography
+boto3
+google-cloud-bigquery

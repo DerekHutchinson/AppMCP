@@ -11,5 +11,7 @@ async def close_db() -> None:
 
 
 async def fetch_ro(query: str, *args, datasource: str | None = None,
-                   limit: int | None = None) -> list[dict]:
-    return await datasources.get_source(datasource).fetch_ro(query, *args, limit=limit)
+                   limit: int | None = None, offset: int = 0) -> list[dict]:
+    return await datasources.get_source(datasource).fetch_ro(
+        query, *args, limit=limit, offset=offset
+    )

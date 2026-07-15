@@ -7,6 +7,10 @@ web app on the same FastAPI application:
   * App catalog (auth-gated)         ->  /
   * Published app (sandboxed)        ->  /a/{slug}
   * App data proxy (validated SQL)   ->  /a/{slug}/sql
+  * App email (SendGrid)             ->  /a/{slug}/email
+  * App Microsoft Graph (delegated)  ->  /a/{slug}/graph
+  * App U.S. Census Data API         ->  /a/{slug}/census
+  * App S3 objects (list/get)        ->  /a/{slug}/s3
   * Author/admin manage UI           ->  /manage
   * Browser session login            ->  /login, /auth/callback, /logout
   * Shared static assets             ->  /static/*
@@ -27,15 +31,17 @@ from fastmcp import FastMCP
 
 import auth
 import db
+import graph_tokens
 import registry
+import s3source
 import session_auth
 import tool_access
 from config import settings
 from tools import apps_admin, data_explore
-from web import home, manage, proxy, serve
+from web import census, email, graph, home, manage, proxy, s3, serve
 
 # ---- MCP server + tool registration ----
-mcp = FastMCP("Gabriel App Publisher")
+mcp = FastMCP("AppMCP App Publisher")
 data_explore.register(mcp)
 apps_admin.register(mcp)
 
@@ -49,12 +55,17 @@ mcp_app = mcp.http_app(path="/mcp")
 async def lifespan(app: FastAPI):
     await db.init_db()
     await registry.init_registry()
+    if settings.s3_configured:
+        s3source.init_sources()
+    if settings.graph_configured:
+        await graph_tokens.init()
+        await graph_tokens.purge_expired()
     async with mcp_app.lifespan(app):
         yield
     await db.close_db()
 
 
-app = FastAPI(title="Gabriel App Publisher", lifespan=lifespan)
+app = FastAPI(title="AppMCP App Publisher", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -74,6 +85,10 @@ if settings.auth_enabled or settings.local_dev_bypass:
     home.register(web_router)
     serve.register(web_router)
     proxy.register(web_router)
+    email.register(web_router)
+    graph.register(web_router)
+    census.register(web_router)
+    s3.register(web_router)
     manage.register(web_router)
     app.include_router(web_router)
 

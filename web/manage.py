@@ -12,8 +12,70 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import registry
 import tool_access
+from config import settings
 from session_auth import session_email
 from web.render import render_manage, render_notice
+
+# SQL extraction for the manage "Inspect" action: pull string literals that look
+# like SQL out of the stored HTML so a reviewer can read what an app queries. A
+# heuristic (not a JS parser): find '..' / ".." / `..` literals, stitch together
+# adjacent literals joined by string concatenation (`"a" + "b"`, common for
+# multi-line SQL), then keep the ones containing SELECT ... FROM. Catches inline
+# AppData.query("..."), template-literal SQL, and concatenated SQL. Apps that
+# splice in runtime expressions are shown with a /*…*/ placeholder for the gap.
+_SQL_LOOKS = re.compile(r"\bselect\b[\s\S]*?\bfrom\b", re.IGNORECASE)
+# One regex, three alternatives, so matches come back in source order.
+_LITERAL_RE = re.compile(r'"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'|`([^`]*)`')
+
+
+def _literal_value(m: "re.Match") -> str:
+    return m.group(1) or m.group(2) or m.group(3) or ""
+
+
+def _unescape_js(s: str) -> str:
+    return (s.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "")
+             .replace('\\"', '"').replace("\\'", "'"))
+
+
+def extract_sql(html_text: str) -> list[str]:
+    """Return distinct SQL-looking strings found in the app HTML.
+
+    Merges concatenation runs (literals separated only by `+`, optionally with a
+    runtime expression between them) so multi-line SQL isn't truncated.
+    """
+    text = html_text or ""
+    lits = [(m.start(), m.end(), _literal_value(m))
+            for m in _LITERAL_RE.finditer(text)]
+
+    merged: list[str] = []
+    i, n = 0, len(lits)
+    while i < n:
+        _, end, combined = lits[i]
+        j = i + 1
+        while j < n:
+            gap = text[end:lits[j][0]].strip()
+            if gap == "+":                                  # plain concatenation
+                combined += lits[j][2]
+            elif gap.startswith("+") and gap.endswith("+"):  # expr spliced in
+                combined += " /*…*/ " + lits[j][2]
+            else:
+                break
+            end = lits[j][1]
+            j += 1
+        merged.append(combined)
+        i = j
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for raw in merged:
+        if not _SQL_LOOKS.search(raw):
+            continue
+        sql = _unescape_js(raw).strip()
+        key = " ".join(sql.split()).lower()
+        if key not in seen:
+            seen.add(key)
+            found.append(sql)
+    return found
 
 
 def _require_author(request: Request):
@@ -97,6 +159,21 @@ def register(router: APIRouter) -> None:
         ok = await registry.delete_app(slug)
         return JSONResponse({"ok": ok, "slug": slug})
 
+    @router.get("/manage/{slug}/sql")
+    async def inspect_sql(slug: str, request: Request):
+        email, err = _auth_json(request)
+        if err:
+            return err
+        app, err = await _owned_or_admin(slug, email)
+        if err:
+            return err
+        return JSONResponse({
+            "ok": True,
+            "slug": slug,
+            "datasource": app.get("datasource") or None,
+            "queries": extract_sql(app.get("html") or ""),
+        })
+
     @router.post("/manage/{slug}/access")
     async def set_access(slug: str, request: Request):
         email, err = _auth_json(request)
@@ -120,3 +197,20 @@ def register(router: APIRouter) -> None:
                                 status_code=400)
         ok = await registry.set_access(slug, entries)
         return JSONResponse({"ok": ok, "slug": slug})
+
+    @router.post("/manage/{slug}/category")
+    async def set_category(slug: str, request: Request):
+        email, err = _auth_json(request)
+        if err:
+            return err
+        _, err = await _owned_or_admin(slug, email)
+        if err:
+            return err
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"ok": False, "error": "Invalid JSON body."},
+                                status_code=400)
+        cat = settings.match_category(body.get("category"))
+        ok = await registry.set_category(slug, cat)
+        return JSONResponse({"ok": ok, "slug": slug, "category": cat})

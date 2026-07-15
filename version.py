@@ -5,4 +5,4 @@ instance. Shown in the catalog/manage headers.
 
 Convention: MAJOR.MINOR.PATCH.
 """
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.11.0"

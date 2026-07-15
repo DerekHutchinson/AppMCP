@@ -17,8 +17,8 @@ nested-number arrays or single objects rather than large arrays of row objects.
 """
 import re
 
-# `AppData.query(` (any spacing) — the sanctioned runtime data path.
-_APPDATA_RE = re.compile(r"\bAppData\s*\.\s*query\s*\(")
+# A sanctioned runtime data path: AppData.query / queryPages / s3 (any spacing).
+_APPDATA_RE = re.compile(r"\bAppData\s*\.\s*(?:query|queryPages|s3)\b")
 
 # Object boundary inside an array literal: `},{` ignoring whitespace/newlines.
 # A baked result set of N rows produces N-1 of these; TopoJSON arcs and lookup

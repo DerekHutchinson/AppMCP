@@ -1,0 +1,893 @@
+<!doctype html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  DASHBOARD TEMPLATE — Department-agnostic                            ║
+  ║                                                                      ║
+  ║  Same shape as the sample AE Performance Dashboard:                  ║
+  ║    Sidebar + Topbar + 5 sections                                     ║
+  ║    (Exec Summary · Trends · Leaderboard · Compare · Member Detail)   ║
+  ║                                                                      ║
+  ║  All AE-specific labels stripped. All numbers are placeholder.       ║
+  ║  Light theme only (dark mode removed).                               ║
+  ║  Re-skin for any department by:                                      ║
+  ║    1. Editing the {{ PLACEHOLDER }} text in the markup               ║
+  ║    2. Replacing demo data in the TEAM/MEMBERS/TREND constants        ║
+  ║    3. (Optional) Editing CSS variables in :root to re-brand          ║
+  ║                                                                      ║
+  ║  Example domain mappings:                                            ║
+  ║    Sales        → Member=AE,        Volume=Net Sales,  Reach=Doors   ║
+  ║    Marketing    → Member=Manager,   Volume=MQLs,       Reach=Channels║
+  ║    Customer Suc → Member=CSM,       Volume=Renewals,   Reach=Accounts║
+  ║    HR           → Member=Recruiter, Volume=Hires,      Reach=Roles   ║
+  ║    Ops          → Member=Lead,      Volume=Throughput, Reach=Sites   ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280,initial-scale=1" />
+<title>{{ DASHBOARD_TITLE }} · {{ BRAND_NAME }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;0,6..96,600;0,6..96,700;1,6..96,400;1,6..96,500&family=Cinzel:wght@500;600;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Playfair+Display:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg-0:#F8F2EE;--bg-1:#ffffff;--bg-2:#F0EAE4;--bg-3:#E5DDD5;
+  --line:rgba(0,0,0,.08);--line-strong:rgba(0,0,0,.14);
+  --text-0:#1A1A1A;--text-1:#3D3D3D;--text-2:#6B6B6B;--text-3:#9A9A9A;
+  --accent:#C19C8B;--accent-2:#93341C;--accent-3:#D48F83;
+  --warn:#D48F83;--danger:#93341C;--success:#C19C8B;
+  --grad-card:linear-gradient(160deg,rgba(96,165,250,.06),rgba(167,139,250,.04) 55%,rgba(110,231,183,.04));
+  --brand-red:#93341C;--brand-red-dark:#6F2715;--brand-red-light:#D48F83;--brand-beige:#C19C8B;--brand-cream:#F8F2EE;
+  --grad-brand:#93341C;
+  --shadow-1:0 1px 0 rgba(255,255,255,.7) inset,0 4px 12px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.04);
+  --radius:14px;--radius-lg:20px;
+}
+*{box-sizing:border-box;}
+html,body{background:var(--bg-0);color:var(--text-0);margin:0;padding:0;}
+body{font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;
+  background:radial-gradient(1200px 600px at 85% -10%,rgba(147,52,28,.04),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(193,156,139,.04),transparent 55%),var(--bg-0);}
+a{color:inherit;text-decoration:none;}
+.app{display:grid;grid-template-columns:300px 1fr;min-height:100vh;}
+.sidebar{position:sticky;top:0;height:100vh;background:rgba(255,255,255,.96);backdrop-filter:blur(14px);border-right:1px solid var(--line);padding:26px 18px;display:flex;flex-direction:column;gap:6px;}
+.brand{display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 4px 22px;border-bottom:1px solid var(--line);margin-bottom:16px;}
+.brand-wordmark{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:0 4px;width:100%;max-width:100%;min-width:0;}
+.wm-full{display:block;width:100%;max-width:280px;height:auto;}
+.wm-sub{font-family:'Inter',sans-serif;font-size:9.5px;color:var(--text-2);margin-top:2px;letter-spacing:.20em;text-transform:uppercase;font-weight:500;}
+
+.nav{display:flex;flex-direction:column;gap:2px;}
+.nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--text-1);font-size:13.5px;font-weight:500;border:1px solid transparent;transition:all .2s;cursor:pointer;}
+.nav a .dot{width:6px;height:6px;border-radius:50%;background:var(--text-3);}
+.nav a:hover{color:var(--text-0);background:rgba(15,23,42,.04);}
+.nav a.active{color:var(--text-0);background:rgba(212,143,131,.14);border-color:var(--line-strong);}
+.nav a.active .dot{background:var(--brand-red);box-shadow:0 0 0 4px rgba(212,143,131,.30);}
+.side-foot{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);font-size:11px;color:var(--text-3);line-height:1.5;}
+.side-foot strong{color:var(--text-1);font-weight:600;}
+
+.main{min-width:0;}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;align-items:center;gap:18px;}
+.page-title h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.1px;}
+.page-title .sub{font-size:12.5px;color:var(--text-2);}
+.filters{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.chip{background:#ffffff;border:1px solid var(--line-strong);color:var(--text-1);border-radius:10px;padding:8px 12px;font-size:12.5px;font-family:inherit;outline:none;cursor:pointer;transition:all .2s;}
+.chip:hover{color:var(--text-0);border-color:rgba(147,52,28,.4);}
+.chip.primary{background:var(--brand-red);color:#ffffff;border-color:transparent;font-weight:600;}
+.chip.toggle.on{background:var(--brand-red);color:#ffffff;border-color:transparent;font-weight:600;}
+
+.content{padding:26px 28px 60px;display:flex;flex-direction:column;gap:28px;}
+.section-head{display:flex;align-items:center;gap:14px;margin-bottom:4px;}
+.section-head .bar{width:4px;height:22px;border-radius:4px;background:var(--grad-brand);}
+.section-head h2{margin:0;font-size:16px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;}
+.section-head .meta{margin-left:auto;font-size:12px;color:var(--text-2);}
+
+.grid{display:grid;gap:16px;}
+.g-5{grid-template-columns:repeat(5,minmax(0,1fr));}
+.g-4{grid-template-columns:repeat(4,minmax(0,1fr));}
+.g-3{grid-template-columns:repeat(3,minmax(0,1fr));}
+.g-2{grid-template-columns:repeat(2,minmax(0,1fr));}
+
+.card{background:#ffffff;border:1px solid var(--line);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow-1);position:relative;overflow:hidden;}
+.card::before{content:"";position:absolute;inset:-1px;border-radius:inherit;background:linear-gradient(135deg,rgba(147,52,28,.20),transparent 50%);-webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);-webkit-mask-composite:xor;mask-composite:exclude;padding:1px;pointer-events:none;opacity:.5;}
+.card h3{margin:0 0 4px;font-size:14px;font-weight:700;letter-spacing:.2px;}
+.card .card-sub{font-size:12px;color:var(--text-2);margin-bottom:14px;}
+
+/* KPI cards */
+.kpi .head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.kpi .label{font-size:11.5px;color:var(--text-2);letter-spacing:.4px;text-transform:uppercase;font-weight:600;}
+.kpi .badge{font-size:11px;font-weight:600;padding:4px 8px;border-radius:999px;border:1px solid var(--line-strong);display:inline-flex;gap:4px;align-items:center;white-space:nowrap;}
+.kpi .badge.good{color:#3D3D3D;background:rgba(193,156,139,.18);border-color:rgba(193,156,139,.45);}
+.kpi .badge.warn{color:#93341C;background:rgba(212,143,131,.20);border-color:rgba(212,143,131,.45);}
+.kpi .badge.bad{color:#ffffff;background:#93341C;border-color:#93341C;}
+.kpi .value{font-size:30px;font-weight:800;letter-spacing:-.5px;line-height:1.1;margin-top:14px;font-feature-settings:"tnum";}
+.kpi .unit{font-size:14px;color:var(--text-2);font-weight:600;margin-left:4px;}
+.kpi .trend{margin-top:2px;font-size:11.5px;color:var(--text-2);}
+.kpi .spark{margin-top:8px;height:40px;}
+
+/* Leaderboard table */
+.lb-table{width:100%;border-collapse:collapse;font-size:13px;}
+.lb-table thead th{padding:11px 12px;text-align:left;color:var(--text-2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;}
+.lb-table thead th.num{text-align:right;}
+.lb-table thead th:hover{color:var(--text-0);}
+.lb-table thead th.sorted{color:var(--brand-red);}
+.lb-table thead th .sort-arrow{display:inline-block;margin-left:4px;font-size:10px;}
+.lb-table tbody tr{cursor:pointer;border-bottom:1px solid var(--line);transition:background .15s;}
+.lb-table tbody tr:hover td{background:rgba(212,143,131,.08);}
+.lb-table tbody tr.selected td{background:rgba(212,143,131,.14);}
+.lb-table tbody tr.selected td:first-child{box-shadow:inset 3px 0 0 var(--brand-red);}
+.lb-table td{padding:14px 12px;vertical-align:middle;}
+.lb-table td.num{font-family:'JetBrains Mono',monospace;text-align:right;font-feature-settings:"tnum";}
+.lb-table .ae-cell{display:flex;align-items:center;gap:10px;min-width:0;}
+.lb-table .ae-name{font-size:13px;font-weight:600;}
+.lb-table .ae-rm{font-size:11px;color:var(--text-3);margin-top:2px;}
+.avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:11px;color:#ffffff;letter-spacing:.3px;flex-shrink:0;}
+.bar-mini{display:inline-block;vertical-align:middle;width:50px;height:5px;background:rgba(0,0,0,.08);border-radius:5px;overflow:hidden;margin-right:8px;}
+.bar-mini > i{display:block;height:100%;background:var(--brand-red);border-radius:5px;}
+.delta-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;font-feature-settings:"tnum";}
+.delta-pill.pos{color:#3D3D3D;background:rgba(193,156,139,.18);}
+.delta-pill.neg{color:#ffffff;background:#93341C;}
+.delta-pill.warn{color:#93341C;background:rgba(212,143,131,.20);}
+
+/* Toggle group */
+.toggle-group{display:inline-flex;background:#F0EAE4;padding:3px;border-radius:10px;gap:2px;border:1px solid var(--line);}
+.toggle-btn{background:transparent;border:0;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:500;color:var(--text-2);cursor:pointer;font-family:inherit;}
+.toggle-btn.active{background:var(--brand-red);color:#ffffff;font-weight:600;}
+
+/* Matrix */
+.matrix-wrap{overflow-x:auto;}
+table.matrix{width:100%;border-collapse:collapse;font-size:12px;min-width:800px;}
+table.matrix th,table.matrix td{padding:8px 12px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-family:'JetBrains Mono',monospace;}
+table.matrix thead th{font-size:14px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line);font-family:'Inter',sans-serif;padding:12px 14px;}
+table.matrix thead th.kpi-col{text-align:left;min-width:200px;position:sticky;left:0;background:#ffffff;z-index:2;}
+table.matrix tbody td.kpi-col{text-align:left;font-weight:700;color:var(--text-0);position:sticky;left:0;background:#ffffff;z-index:1;font-family:'Inter',sans-serif;font-size:14px;border-right:1px solid var(--line);padding:10px 14px;}
+table.matrix tbody tr.family-header td{padding:22px 14px 10px;font-size:13px;font-weight:700;color:var(--brand-red);text-transform:uppercase;letter-spacing:.12em;border-top:2px solid var(--brand-red);background:#ffffff;font-family:'Inter',sans-serif;text-align:left;}
+table.matrix tbody tr.family-header:first-child td{border-top:none;padding-top:10px;}
+table.matrix tbody td.kpi-col .kpi-sub{font-size:10px;color:var(--text-3);font-weight:400;margin-top:2px;}
+table.matrix tbody tr{border-bottom:1px solid var(--line);}
+table.matrix tbody td.cell-best{background:rgba(193,156,139,.20);color:#1A1A1A;font-weight:700;}
+table.matrix tbody td.cell-worst{background:rgba(147,52,28,.14);color:#93341C;font-weight:700;}
+.family-tag{display:inline-block;font-size:9.5px;font-weight:600;color:var(--brand-red);text-transform:uppercase;letter-spacing:.6px;padding:2px 7px;background:rgba(147,52,28,.08);border-radius:4px;}
+
+/* Profile cards grid */
+.profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
+@media (max-width:1280px){.profile-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:780px){.profile-grid{grid-template-columns:1fr;}}
+.profile-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:0 4px;}
+.pg-btn{background:#ffffff;border:1px solid var(--line-strong);color:var(--text-1);border-radius:8px;padding:8px 14px;font-size:13px;font-family:inherit;cursor:pointer;font-weight:500;transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+.pg-btn:not(:disabled):hover{color:var(--text-0);border-color:rgba(147,52,28,.4);background:rgba(212,143,131,.06);}
+.pg-btn:disabled{opacity:.4;cursor:not-allowed;}
+.pg-info{font-size:12.5px;color:var(--text-2);font-weight:500;}
+.pg-dots{display:flex;gap:6px;}
+.pg-dot{width:8px;height:8px;border-radius:50%;background:var(--bg-3);border:0;padding:0;cursor:pointer;transition:all .15s;}
+.pg-dot.active{background:var(--brand-red);transform:scale(1.3);}
+.pg-dot:hover{background:var(--brand-red-light);}
+.profile-card{background:#ffffff;border:1px solid var(--line);border-radius:14px;padding:22px 26px;}
+.profile-card .ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line);}
+.profile-card .ph-left{display:flex;align-items:center;gap:10px;}
+.profile-card .name{font-size:18px;font-weight:700;}
+.profile-card .rank{font-size:12px;color:var(--text-2);background:#F0EAE4;padding:4px 10px;border-radius:999px;font-weight:500;}
+.profile-card .ph-meta{font-size:12px;color:var(--text-3);margin-bottom:16px;}
+.profile-card .pf-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 36px;}
+.profile-card .pf-section h5{font-size:12px;font-weight:700;color:var(--brand-red);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(147,52,28,.15);}
+.profile-card .pf-row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13.5px;gap:10px;}
+.profile-card .pf-row .k{color:var(--text-2);}
+.profile-card .pf-row .v{font-weight:700;color:var(--text-0);font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;font-size:13px;white-space:nowrap;}
+
+/* Detail panel */
+.detail-card{background:#ffffff;border:1px solid var(--line);border-radius:var(--radius-lg);padding:28px 32px;}
+.detail-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
+.detail-header .info h2{font-size:26px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:14px;}
+.detail-header .info .meta-row{font-size:13px;color:var(--text-2);margin-top:10px;display:flex;gap:18px;flex-wrap:wrap;}
+.detail-header .info .meta-row b{color:var(--text-0);font-weight:600;}
+.detail-header .rank-badge{background:var(--brand-red);color:#ffffff;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;}
+.detail-trend{margin-bottom:28px;}
+.detail-trend h4{font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;}
+.spark-wrap{height:80px;}
+.kpi-families{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 80px;}
+.family-block h4{font-size:13px;font-weight:700;color:var(--brand-red);text-transform:uppercase;letter-spacing:.08em;padding-bottom:10px;margin-bottom:14px;border-bottom:1px solid rgba(147,52,28,.25);}
+.kpi-row{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px dashed rgba(0,0,0,.06);gap:10px;}
+.kpi-row:last-child{border-bottom:none;}
+.kpi-row .key{font-size:13.5px;color:var(--text-2);font-weight:500;}
+.kpi-row .val{font-size:14.5px;color:var(--text-0);font-weight:700;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;white-space:nowrap;}
+.kpi-row .val .sub{font-size:11px;color:var(--text-3);font-weight:500;margin-left:4px;font-family:'Inter',sans-serif;}
+
+.insight{margin-top:14px;padding:10px 12px;border-left:3px solid var(--brand-red);background:linear-gradient(90deg,rgba(147,52,28,.06),transparent 80%);border-radius:6px;font-size:12.5px;color:var(--text-1);}
+.insight b{color:var(--text-0);}
+.insight.warn{border-left-color:#D48F83;background:linear-gradient(90deg,rgba(212,143,131,.12),transparent 80%);}
+.insight.bad{border-left-color:#93341C;background:linear-gradient(90deg,rgba(147,52,28,.10),transparent 80%);}
+
+.footnote{margin-top:12px;padding:14px 18px;background:#ffffff;border:1px solid var(--line);border-radius:12px;font-size:11px;color:var(--text-3);line-height:1.6;}
+.footnote b{color:var(--text-2);}
+.footnote code{background:#F0EAE4;padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-1);}
+
+@media (max-width:1280px){.g-5{grid-template-columns:repeat(3,minmax(0,1fr));}.kpi-families{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:1100px){.g-4{grid-template-columns:repeat(2,minmax(0,1fr));}.g-3{grid-template-columns:repeat(2,minmax(0,1fr));}.g-5{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:780px){.app{grid-template-columns:1fr;}.sidebar{display:none;}.g-4,.g-3,.g-2,.g-5{grid-template-columns:1fr;}.topbar{flex-wrap:wrap;}.filters{width:100%;}.kpi-families{grid-template-columns:1fr;}}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:#C19C8B;border-radius:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ============ DARK THEME OVERRIDES ============ */
+
+
+/* ============ MEMBER SWITCHER (in detail panel) ============ */
+.ae-switcher{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--line);}
+.ae-switcher-label{font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em;align-self:center;margin-right:4px;}
+.ae-switch{display:flex;align-items:center;gap:8px;padding:6px 14px 6px 6px;border-radius:999px;background:var(--bg-2);border:1px solid var(--line);cursor:pointer;font-size:12px;font-weight:500;color:var(--text-1);transition:all .15s;font-family:inherit;}
+.ae-switch:hover{border-color:rgba(147,52,28,.35);color:var(--text-0);background:rgba(212,143,131,.10);}
+.ae-switch.active{background:#93341C;color:#ffffff;border-color:#93341C;}
+.ae-switch.active .avatar{background:rgba(255,255,255,.22) !important;color:#ffffff;}
+.ae-switch .avatar{width:22px;height:22px;font-size:9px;}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand brand-wordmark">
+      <img class="wm-full" src="/static/logo.png" alt="Logo" />
+      <div class="wm-sub">{{ BRAND_TAGLINE }}</div>
+    </div>
+    <nav class="nav">
+      <a href="#summary" class="active"><span class="dot"></span>Executive Summary</a>
+      <a href="#trends"><span class="dot"></span>Trends</a>
+      <a href="#leaderboard"><span class="dot"></span>Leaderboard</a>
+      <a href="#compare"><span class="dot"></span>Compare</a>
+      <a href="#detail"><span class="dot"></span>Member Detail</a>
+    </nav>
+    <div class="side-foot">
+      <!-- REPLACE: data source line and as-of date -->
+      <div><strong>Source</strong></div>
+      <div>{{ DATA_SOURCE }}</div>
+      <div>As of · {{ AS_OF_LABEL }}</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="page-title">
+        <h1>{{ PAGE_TITLE }}</h1>
+        <div class="sub">{{ PAGE_SUBTITLE }}</div>
+      </div>
+      <div class="filters">
+        <span class="chip">As of · {{ AS_OF_LABEL }}</span>
+        <button class="chip primary" id="btn-export">Print snapshot</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <section id="summary">
+        <div class="section-head">
+          <span class="bar"></span><h2>Executive Summary</h2>
+          <div class="meta">Team-level headline KPIs</div>
+        </div>
+        <div class="grid g-5" id="hero-grid"></div>
+      </section>
+
+      <section id="trends">
+        <div class="section-head">
+          <span class="bar" style="background:#93341C"></span>
+          <h2>Trends</h2>
+          <div class="meta">{{ TREND_PERIOD_LABEL }}</div>
+        </div>
+        <div class="card">
+          <h3>{{ TREND_CARD_TITLE }}</h3>
+          <div class="card-sub">{{ TREND_CARD_SUB }}</div>
+          <div style="height:300px"><canvas id="trendLine"></canvas></div>
+        </div>
+      </section>
+
+      <section id="leaderboard">
+        <div class="section-head">
+          <span class="bar" style="background:#93341C"></span>
+          <h2>Team Leaderboard</h2>
+          <div class="meta">Click any row to drill in · Click a column to sort</div>
+        </div>
+        <div class="card" style="padding:8px 16px;">
+          <div style="overflow:auto;">
+            <table class="lb-table" id="leaderboard">
+              <thead>
+                <!-- REPLACE column labels for your domain. Keep data-sort keys matching MEMBERS[] fields. -->
+                <tr>
+                  <th data-sort="name">Member</th>
+                  <th data-sort="customers" class="num">Accounts</th>
+                  <th data-sort="net" class="num sorted">Volume · YTD <span class="sort-arrow">▼</span></th>
+                  <th data-sort="yoy" class="num">YoY</th>
+                  <th data-sort="ab" class="num">Premium Mix</th>
+                  <th data-sort="sthr" class="num">Output · R12M</th>
+                  <th data-sort="ad" class="num">Active Reach</th>
+                  <th data-sort="nd12" class="num">Δ Reach</th>
+                  <th data-sort="replen" class="num">Adoption %</th>
+                  <th data-sort="sc_aged_pct" class="num">Aged %</th>
+                  <th data-sort="rewards" class="num">Engaged Users</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="compare">
+        <div class="section-head">
+          <span class="bar" style="background:#93341C"></span>
+          <h2>Compare Members</h2>
+          <div class="meta">
+            <span class="toggle-group">
+              <button class="toggle-btn active" id="btn-matrix">Matrix</button>
+              <button class="toggle-btn" id="btn-profiles">Profiles</button>
+            </span>
+          </div>
+        </div>
+        <div class="card">
+          <div id="compare-body"></div>
+        </div>
+      </section>
+
+      <section id="detail">
+        <div class="section-head">
+          <span class="bar" style="background:#93341C"></span>
+          <h2>Member Detail</h2>
+          <div class="meta">Click any row in the leaderboard above</div>
+        </div>
+        <div class="detail-card" id="detail-card"></div>
+      </section>
+
+      <div class="footnote">
+        <!-- REPLACE: data-lineage / methodology footnote. HTML allowed. -->
+        <b>Notes.</b> {{ FOOTNOTE_HTML }}
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+Chart.defaults.font.family = "'Inter',system-ui,sans-serif";
+Chart.defaults.font.size = 11.5;
+Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
+Chart.defaults.plugins.tooltip.bodyColor  = '#F8F2EE';
+Chart.defaults.plugins.tooltip.borderColor= 'rgba(212,143,131,.40)';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.padding = 10;
+Chart.defaults.plugins.tooltip.cornerRadius = 8;
+Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(26,26,26,.96)';
+
+// Light theme only — no theme toggle.
+Chart.defaults.color = '#6B6B6B';
+Chart.defaults.borderColor = 'rgba(0,0,0,.08)';
+Chart.defaults.plugins.legend.labels.color = '#3D3D3D';
+
+const $ = id => document.getElementById(id);
+const ctx = id => $(id).getContext('2d');
+const PALETTE = ['#93341C','#D48F83','#C19C8B','#6F2715','#B47868','#8D6B5C'];
+const axis = (opts={}) => ({ grid:{color:'rgba(0,0,0,.06)',drawTicks:false}, ticks:{color:'#6B6B6B',padding:6,...opts} });
+const hexA = (hex,a)=>{const h=hex.replace('#','');return `rgba(${parseInt(h.substring(0,2),16)},${parseInt(h.substring(2,4),16)},${parseInt(h.substring(4,6),16)},${a})`;};
+const fade = (c,color,h=260)=>{const g=c.createLinearGradient(0,0,0,h);g.addColorStop(0,hexA(color,.35));g.addColorStop(1,hexA(color,.02));return g;};
+const avatarBg = n => {let h=0;for(let i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))>>>0;return PALETTE[h%PALETTE.length];};
+const initials = n => n.replace(/\([^)]*\)/g,'').trim().split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase();
+
+const fmt = {
+  currency:(v)=>{if(v==null)return '—';const a=Math.abs(v);if(a>=1e9)return '$'+(v/1e9).toFixed(2)+'B';if(a>=1e6)return '$'+(v/1e6).toFixed(2)+'M';if(a>=1e3)return '$'+(v/1e3).toFixed(0)+'K';return '$'+v.toFixed(0);},
+  pct:(v,d=1)=>v==null?'—':(v>=0?'+':'')+v.toFixed(d)+'%',
+  pctPlain:(v,d=1)=>v==null?'—':v.toFixed(d)+'%',
+  num:(v)=>v==null?'—':v.toLocaleString(),
+  shortNum:(v)=>{if(v==null)return '—';const a=Math.abs(v);if(a>=1e9)return (v/1e9).toFixed(2)+'B';if(a>=1e6)return (v/1e6).toFixed(1)+'M';if(a>=1e3)return (v/1e3).toFixed(1)+'K';return v.toFixed(0);},
+  signed:(v)=>v==null?'—':(v>=0?'+':'')+v,
+};
+
+const TEAM_TREND = TREND_MONTHS.map((_,i) => AES.reduce((s,a) => s + TREND_BY_AE[a.name][i], 0));
+
+// ============ DATA ============
+// ┌────────────────────────────────────────────────────────────────────────┐
+// │ REPLACE THIS BLOCK with your department's data.                         │
+// │ The dashboard expects three constants:                                  │
+// │   TEAM    – team-level rollup (object, one record)                      │
+// │   AES     – per-member array (kept as variable name `AES` so the JS     │
+// │             renderers work unchanged; mentally read as "members")       │
+// │   TREND_MONTHS, TREND_BY_AE – 12 monthly labels + values per member     │
+// │                                                                         │
+// │ All field names are neutral placeholders. Map them to your domain:      │
+// │   `net`     → Sales: Net Sales · Marketing: MQLs · CS: Renewals          │
+// │   `sthr`    → Sales: Sell-through · Marketing: SQL conversions          │
+// │   `ad`      → Sales: Active Reach · CS: Active Accounts                 │
+// │   `replen`  → Sales: Replenishment · HR: Pipeline conversion            │
+// │ The Excel-like matrix in `KPI_ROWS` below has 5 families × 19 KPIs;     │
+// │ rename family labels and KPI labels to whatever fits.                   │
+// └────────────────────────────────────────────────────────────────────────┘
+
+const TEAM = {
+  // Headline rollup metrics — replace values, keep field names (used by renderHero)
+  ae_count: 5,
+  active_customers: 250,        // total accounts in the team's book
+  active_doors: 480,            // total active "reach" units (stores, channels, projects, …)
+  total_doors: 600,             // total reach units in book (active + dormant)
+  net_doors_added_r12m: 12,     // R12m net delta of reach units
+  net_sales_ytd: 8_500_000,     // YTD primary volume metric
+  net_sales_prev_ytd: 7_200_000,
+  net_sales_r12m: 26_000_000,
+  yoy_growth_pct: 18.1,
+  sellthrough_r12m: 14_500_000, // secondary output metric
+  rewards_active_users_apr: 1850, // monthly engaged-user count
+  points_earned_apr: 920_000_000,  // monthly engagement points / activity score
+  mou_customers: 80,             // accounts in the "program" denominator
+  mou_reordered: 56,             // accounts that activated in the program this month
+  showcase_replenishment_pct: 70.0,
+  sc_total_msrp: 18_000_000,     // total program value
+  sc_aged_msrp: 6_800_000,       // program value classified as aged (>180d)
+  sc_aged_pct: 37.8,
+};
+
+const AES = [
+  // REPLACE: each row is one entity (team member, region, squad, vendor — whatever you're measuring)
+  // Required at minimum: name, rm, team, customers, net, yoy, ab, sthr, ad, nd12, replen, sc_aged_pct, rewards
+  {name:'Member One',   rm:'Manager A', team:'Region North', customers:60,
+   net:2200000, net_apr:520000, net_r12m:6800000, prev_ytd:1850000, yoy:18.9,
+   ab_apr:200000, ab_ytd:820000, ab:37.3,
+   sthr_apr:280000, sthr_ytd:1120000, sthr:3600000, st_si:0.53,
+   reporting_doors:42, brread:6.5, instock:88.0,
+   ad:110, total_doors:130, retention:84.6, nd12:5, doors_added:8, doors_exited:3,
+   rewards:520, points_apr:230000000, warranty_rate:48.0, penetration:100, rewards_customers:65,
+   sc_si:280000, sc_si_apr:65000, sc_si_r12m:870000, sc_st:380000, sc_st_apr:30000, sc_st_r12m:380000,
+   mou:18, reordered:14, replen:77.8,
+   sc_units:2400, sc_msrp:4800000, sc_avg_daysin:210, sc_aged_units:880, sc_aged_msrp:1750000, sc_aged_pct:36.5,
+   sc_b1:780, sc_b2:460, sc_b3:550, sc_b4:610},
+  {name:'Member Two',   rm:'Manager A', team:'Region North', customers:55,
+   net:2000000, net_apr:480000, net_r12m:6200000, prev_ytd:1700000, yoy:17.6,
+   ab_apr:180000, ab_ytd:740000, ab:37.0,
+   sthr_apr:260000, sthr_ytd:1050000, sthr:3400000, st_si:0.55,
+   reporting_doors:38, brread:6.2, instock:86.0,
+   ad:100, total_doors:118, retention:84.7, nd12:3, doors_added:6, doors_exited:3,
+   rewards:475, points_apr:205000000, warranty_rate:47.5, penetration:100, rewards_customers:58,
+   sc_si:240000, sc_si_apr:58000, sc_si_r12m:760000, sc_st:340000, sc_st_apr:26000, sc_st_r12m:340000,
+   mou:16, reordered:12, replen:75.0,
+   sc_units:2100, sc_msrp:4200000, sc_avg_daysin:215, sc_aged_units:780, sc_aged_msrp:1530000, sc_aged_pct:36.4,
+   sc_b1:680, sc_b2:410, sc_b3:490, sc_b4:520},
+  {name:'Member Three', rm:'Manager B', team:'Region South', customers:52,
+   net:1750000, net_apr:430000, net_r12m:5400000, prev_ytd:1600000, yoy:9.4,
+   ab_apr:140000, ab_ytd:580000, ab:33.1,
+   sthr_apr:230000, sthr_ytd:920000, sthr:2900000, st_si:0.54,
+   reporting_doors:35, brread:5.7, instock:82.5,
+   ad:92, total_doors:115, retention:80.0, nd12:1, doors_added:4, doors_exited:3,
+   rewards:420, points_apr:175000000, warranty_rate:46.8, penetration:100, rewards_customers:50,
+   sc_si:200000, sc_si_apr:48000, sc_si_r12m:640000, sc_st:280000, sc_st_apr:22000, sc_st_r12m:280000,
+   mou:14, reordered:9, replen:64.3,
+   sc_units:1750, sc_msrp:3500000, sc_avg_daysin:225, sc_aged_units:690, sc_aged_msrp:1350000, sc_aged_pct:38.6,
+   sc_b1:560, sc_b2:340, sc_b3:410, sc_b4:440},
+  {name:'Member Four',  rm:'Manager B', team:'Region South', customers:45,
+   net:1450000, net_apr:360000, net_r12m:4500000, prev_ytd:1400000, yoy:3.6,
+   ab_apr:115000, ab_ytd:460000, ab:31.7,
+   sthr_apr:195000, sthr_ytd:780000, sthr:2500000, st_si:0.56,
+   reporting_doors:30, brread:5.2, instock:78.0,
+   ad:88, total_doors:110, retention:80.0, nd12:1, doors_added:3, doors_exited:2,
+   rewards:325, points_apr:140000000, warranty_rate:45.2, penetration:100, rewards_customers:42,
+   sc_si:160000, sc_si_apr:38000, sc_si_r12m:520000, sc_st:230000, sc_st_apr:18000, sc_st_r12m:230000,
+   mou:11, reordered:7, replen:63.6,
+   sc_units:1400, sc_msrp:2800000, sc_avg_daysin:235, sc_aged_units:580, sc_aged_msrp:1120000, sc_aged_pct:40.0,
+   sc_b1:460, sc_b2:280, sc_b3:330, sc_b4:330},
+  {name:'Member Five',  rm:'Manager C', team:'Region East', customers:38,
+   net:1100000, net_apr:280000, net_r12m:3100000, prev_ytd:1050000, yoy:4.8,
+   ab_apr:90000, ab_ytd:360000, ab:32.7,
+   sthr_apr:170000, sthr_ytd:680000, sthr:2100000, st_si:0.68,
+   reporting_doors:25, brread:4.8, instock:74.0,
+   ad:90, total_doors:127, retention:70.9, nd12:2, doors_added:5, doors_exited:3,
+   rewards:110, points_apr:170000000, warranty_rate:44.0, penetration:100, rewards_customers:35,
+   sc_si:120000, sc_si_apr:28000, sc_si_r12m:380000, sc_st:170000, sc_st_apr:13000, sc_st_r12m:170000,
+   mou:9, reordered:6, replen:66.7,
+   sc_units:1100, sc_msrp:2200000, sc_avg_daysin:245, sc_aged_units:460, sc_aged_msrp:880000, sc_aged_pct:40.0,
+   sc_b1:340, sc_b2:210, sc_b3:260, sc_b4:290},
+];
+
+const TREND_MONTHS = ['Jun 25','Jul 25','Aug 25','Sep 25','Oct 25','Nov 25','Dec 25','Jan 26','Feb 26','Mar 26','Apr 26','May 26'];
+const TREND_BY_AE = {
+  // REPLACE: keys must match AES[].name exactly. 12 monthly numbers each.
+  'Member One':   [420000, 380000, 450000, 480000, 440000, 620000, 800000, 500000, 460000, 410000, 540000, 520000],
+  'Member Two':   [380000, 340000, 410000, 440000, 400000, 560000, 720000, 460000, 420000, 380000, 500000, 480000],
+  'Member Three': [340000, 310000, 370000, 400000, 360000, 510000, 660000, 420000, 380000, 340000, 460000, 430000],
+  'Member Four':  [290000, 270000, 310000, 340000, 300000, 430000, 560000, 350000, 320000, 290000, 380000, 360000],
+  'Member Five':  [220000, 200000, 240000, 260000, 230000, 330000, 430000, 270000, 250000, 220000, 290000, 280000],
+};
+
+// ============ Hero KPIs ============
+function renderHero(){
+  // REPLACE labels, badge text, and trend strings to match your domain.
+  // The 5 hero cards each have: label, value (auto-formatted), delta badge, trend caption, sparkline, color.
+  const cards = [
+    {label:'Volume · YTD',         value:fmt.currency(TEAM.net_sales_ytd), badge:'▲ +18.1%', badgeCls:'good', trend:`vs. ${fmt.currency(TEAM.net_sales_prev_ytd)} prior YTD`,                  spark:TEAM_TREND,                  color:'#93341C'},
+    {label:'YoY Growth',           value:'+18.1%',                         badge:'5 of 5 growing', badgeCls:'good', trend:'every member positive',                                              spark:TEAM_TREND.slice(-6),        color:'#C19C8B'},
+    {label:'Active Reach',         value:fmt.num(TEAM.active_doors),       badge:'▲ +12 R12m', badgeCls:'good', trend:`${TEAM.total_doors} total · ${Math.round(TEAM.active_doors/TEAM.total_doors*100)}% retention`, spark:[450,455,460,465,470,472,475,478,478,479,480,480], color:'#D48F83'},
+    {label:'Output · R12M',        value:fmt.currency(TEAM.sellthrough_r12m), badge:'0.56x ratio', badgeCls:'warn', trend:'downstream conversion',                                              spark:TEAM_TREND.map(v=>v*0.56),  color:'#B47868'},
+    {label:'Program Adoption',     value:fmt.pctPlain(TEAM.showcase_replenishment_pct,1), badge:'▲ at target', badgeCls:'good', trend:`${TEAM.mou_reordered} of ${TEAM.mou_customers} active`,  spark:[62,64,66,67,68,68,69,69,70,70,70,70], color:'#C19C8B'},
+  ];
+  $('hero-grid').innerHTML = cards.map((c,i)=>`
+    <div class="card kpi">
+      <div class="head"><div class="label">${c.label}</div><div class="badge ${c.badgeCls}">${c.badge}</div></div>
+      <div class="value">${c.value}</div>
+      <div class="trend">${c.trend}</div>
+      <div class="spark"><canvas id="sp-${i}"></canvas></div>
+    </div>`).join('');
+  cards.forEach((c,i)=>{
+    const cx = ctx('sp-'+i);
+    new Chart(cx,{type:'line',data:{labels:c.spark.map((_,k)=>k),datasets:[{data:c.spark,borderColor:c.color,backgroundColor:fade(cx,c.color,40),borderWidth:2,tension:.4,pointRadius:0,fill:true}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}});
+  });
+}
+
+// ============ Trend chart ============
+function renderTrend(){
+  const datasets = AES.map((a,i)=>({
+    label:a.name.split(' ')[0],
+    data:TREND_BY_AE[a.name].map(v=>v/1e6),
+    borderColor:PALETTE[i], backgroundColor:hexA(PALETTE[i],0.04),
+    borderWidth:2, tension:0.35, pointRadius:0, fill:false,
+  }));
+  new Chart(ctx('trendLine'),{
+    type:'line', data:{labels:TREND_MONTHS, datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14,font:{size:11}}},
+        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.parsed.y.toFixed(2)+'M'}}},
+      scales:{x:axis(), y:axis({callback:v=>v.toFixed(1)+'M'})}}
+  });
+}
+
+// ============ Leaderboard ============
+let sortKey='net', sortDir=-1, selectedAe=null;
+function renderLeaderboard(){
+  const sorted = [...AES].sort((a,b)=>{
+    const av=a[sortKey], bv=b[sortKey];
+    if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
+    return (((av==null?0:av)) - ((bv==null?0:bv))) * sortDir;
+  });
+  if (!selectedAe) selectedAe = sorted[0].name;
+  const max_net = Math.max(...AES.map(a=>a.net));
+  $('leaderboard-body').innerHTML = sorted.map(a=>{
+    const yoyCls = a.yoy >= 10 ? 'pos' : a.yoy > 0 ? 'pos' : 'neg';
+    const ndCls = a.nd12 > 0 ? 'pos' : 'neg';
+    const repCls = a.replen >= 60 ? 'pos' : a.replen >= 50 ? 'warn' : 'neg';
+    const ageCls = a.sc_aged_pct < 40 ? 'pos' : a.sc_aged_pct < 50 ? 'warn' : 'neg';
+    const barPct = (a.net / max_net) * 100;
+    return `<tr data-ae="${a.name}" class="${a.name===selectedAe?'selected':''}">
+      <td>
+        <div class="ae-cell">
+          <div class="avatar" style="background:${avatarBg(a.name)}">${initials(a.name)}</div>
+          <div>
+            <div class="ae-name">${a.name}</div>
+            <div class="ae-rm">${a.rm} · ${a.team}</div>
+          </div>
+        </div>
+      </td>
+      <td class="num">${fmt.num(a.customers)}</td>
+      <td class="num"><span class="bar-mini"><i style="width:${barPct}%"></i></span>${fmt.currency(a.net)}</td>
+      <td class="num"><span class="delta-pill ${yoyCls}">${a.yoy>=0?'▲':'▼'} ${fmt.pct(a.yoy)}</span></td>
+      <td class="num">${fmt.pctPlain(a.ab)}</td>
+      <td class="num">${fmt.currency(a.sthr)}</td>
+      <td class="num">${fmt.num(a.ad)}</td>
+      <td class="num"><span class="delta-pill ${ndCls}">${fmt.signed(a.nd12)}</span></td>
+      <td class="num"><span class="delta-pill ${repCls}">${fmt.pctPlain(a.replen,0)}</span></td>
+      <td class="num"><span class="delta-pill ${ageCls}">${fmt.pctPlain(a.sc_aged_pct,0)}</span></td>
+      <td class="num">${fmt.num(a.rewards)}</td>
+    </tr>`;
+  }).join('');
+  document.querySelectorAll('#leaderboard-body tr').forEach(tr=>{
+    tr.addEventListener('click', () => {
+      selectedAe = tr.dataset.ae;
+      renderLeaderboard();
+      renderDetail();
+      $('detail').scrollIntoView({behavior:'smooth'});
+    });
+  });
+}
+document.querySelectorAll('#leaderboard thead th').forEach(th=>{
+  th.addEventListener('click', () => {
+    const k = th.dataset.sort;
+    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+    document.querySelectorAll('#leaderboard thead th').forEach(t=>{t.classList.remove('sorted');t.querySelectorAll('.sort-arrow').forEach(a=>a.remove());});
+    th.classList.add('sorted');
+    th.insertAdjacentHTML('beforeend', ' <span class="sort-arrow">' + (sortDir>0?'▲':'▼') + '</span>');
+    renderLeaderboard();
+  });
+});
+
+// ============ Compare: Matrix view ============
+// REPLACE family names and KPI labels to match your domain.
+// Keep `key` matching field names in AES[]. `better:'high'/'low'` drives the best/worst color highlights.
+const KPI_ROWS = [
+  // Family 1 — primary volume / revenue metrics
+  {family:'Performance', label:'Volume · YTD',           key:'net',         fmt:'currency',  better:'high'},
+  {family:'Performance', label:'YoY Growth',             key:'yoy',         fmt:'pct',       better:'high'},
+  {family:'Performance', label:'Premium Mix',            key:'ab',          fmt:'pctPlain',  better:'high'},
+  {family:'Performance', label:'Volume · R12m',          key:'net_r12m',    fmt:'currency',  better:'high'},
+  // Family 2 — downstream / quality metrics
+  {family:'Quality',     label:'Output · R12m',          key:'sthr',        fmt:'currency',  better:'high'},
+  {family:'Quality',     label:'Output / Volume Ratio',  key:'st_si',       fmt:'ratio',     better:'high'},
+  {family:'Quality',     label:'Availability %',         key:'instock',     fmt:'pctPlain',  better:'high'},
+  {family:'Quality',     label:'Reporting Coverage',     key:'reporting_doors', fmt:'num',   better:'high'},
+  {family:'Quality',     label:'Category Breadth',       key:'brread',      fmt:'decimal',   better:'high'},
+  // Family 3 — reach / footprint
+  {family:'Reach',       label:'Active Accounts',        key:'ad',          fmt:'num',       better:'high'},
+  {family:'Reach',       label:'Retention %',            key:'retention',   fmt:'pctPlain',  better:'high'},
+  {family:'Reach',       label:'Net Accounts · R12m',    key:'nd12',        fmt:'signed',    better:'high'},
+  // Family 4 — engagement / activity
+  {family:'Engagement',  label:'Active Users',           key:'rewards',     fmt:'num',       better:'high'},
+  {family:'Engagement',  label:'Activity Score',         key:'points_apr',  fmt:'shortNum',  better:'high'},
+  {family:'Engagement',  label:'Completion Rate',        key:'warranty_rate', fmt:'pctPlain',better:'high'},
+  {family:'Engagement',  label:'Penetration',    key:'penetration', fmt:'pctPlain',  better:'high'},
+  // Family 5 — program / initiative-specific
+  {family:'Programs',    label:'Program A · YTD',        key:'sc_si',       fmt:'currency',  better:'high'},
+  {family:'Programs',    label:'Program B · R12m',       key:'sc_st',       fmt:'currency',  better:'high'},
+  {family:'Programs',    label:'Adoption %',             key:'replen',      fmt:'pctPlain',  better:'high'},
+  {family:'Programs',    label:'Aged Value (>180d)',     key:'sc_aged_msrp',fmt:'currency',  better:'low'},
+  {family:'Programs',    label:'Aged %',                 key:'sc_aged_pct', fmt:'pctPlain',  better:'low'},
+];
+const fmtFor = {
+  currency:fmt.currency, pct:(v)=>fmt.pct(v,1), pctPlain:(v)=>fmt.pctPlain(v,1),
+  num:fmt.num, signed:fmt.signed, shortNum:fmt.shortNum,
+  ratio:(v)=>v==null?'—':v.toFixed(2), decimal:(v)=>v==null?'—':v.toFixed(1),
+};
+function renderMatrix(){
+  let lastFamily = null;
+  const numCols = AES.length + 1;
+  const rowsArr = [];
+  for (const r of KPI_ROWS) {
+    if (lastFamily !== r.family) {
+      rowsArr.push(`<tr class="family-header"><td colspan="${numCols}">${r.family}</td></tr>`);
+      lastFamily = r.family;
+    }
+    const vals = AES.map(a=>a[r.key]);
+    const nums = vals.filter(v=>v!=null && !isNaN(v));
+    const best = r.better==='high' ? Math.max(...nums) : Math.min(...nums);
+    const worst = r.better==='high' ? Math.min(...nums) : Math.max(...nums);
+    const cells = AES.map(a=>{
+      const v=a[r.key]; let cls='';
+      if (v!=null && nums.length>1 && best!==worst) { if (v===best) cls='cell-best'; else if (v===worst) cls='cell-worst'; }
+      return `<td class="${cls}">${fmtFor[r.fmt](v)}</td>`;
+    }).join('');
+    rowsArr.push(`<tr><td class="kpi-col">${r.label}</td>${cells}</tr>`);
+  }
+  const rows = rowsArr.join('');
+  return `<div class="matrix-wrap"><table class="matrix">
+    <thead><tr><th class="kpi-col">KPI</th>${AES.map(a=>`<th>${a.name.split(' ')[0]}</th>`).join('')}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+// ============ Compare: Profiles view ============
+let profilesPage = 0;
+const PROFILES_PER_PAGE = 3;
+function renderProfiles(){
+  const sorted = [...AES].sort((x,y)=>y.net-x.net);
+  const totalPages = Math.ceil(sorted.length / PROFILES_PER_PAGE);
+  if (profilesPage >= totalPages) profilesPage = totalPages - 1;
+  if (profilesPage < 0) profilesPage = 0;
+  const start = profilesPage * PROFILES_PER_PAGE;
+  const end = Math.min(start + PROFILES_PER_PAGE, sorted.length);
+  const visible = sorted.slice(start, end);
+  const dotsHtml = Array.from({length: totalPages}, (_, k) =>
+    `<button class="pg-dot ${k===profilesPage?'active':''}" data-page="${k}" aria-label="Page ${k+1}"></button>`
+  ).join('');
+  const nav = `<div class="profile-nav">
+    <button class="pg-btn" id="pg-prev" ${profilesPage===0?'disabled':''}>← Previous</button>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <span class="pg-info">Showing ${start+1}–${end} of ${sorted.length}</span>
+      <div class="pg-dots">${dotsHtml}</div>
+    </div>
+    <button class="pg-btn" id="pg-next" ${profilesPage>=totalPages-1?'disabled':''}>Next →</button>
+  </div>`;
+  return nav + `<div class="profile-grid">${visible.map((a,relIdx)=>{ const i = start + relIdx; return `
+    <div class="profile-card">
+      <div class="ph">
+        <div class="ph-left">
+          <div class="avatar" style="background:${avatarBg(a.name)}">${initials(a.name)}</div>
+          <div class="name">${a.name}</div>
+        </div>
+        <div class="rank">#${i+1} of ${AES.length}</div>
+      </div>
+      <div class="ph-meta">${a.rm} · ${a.customers} customers · ${a.total_doors} doors · ${a.reporting_doors} reporting</div>
+      <div class="pf-grid">
+        <div class="pf-section">
+          <h5>Performance</h5>
+          <div class="pf-row"><span class="k">Volume YTD</span><span class="v">${fmt.currency(a.net)}</span></div>
+          <div class="pf-row"><span class="k">YoY %</span><span class="v" style="color:${a.yoy>=10?'var(--success)':a.yoy>=5?'var(--warn)':'var(--danger)'}">${fmt.pct(a.yoy)}</span></div>
+          <div class="pf-row"><span class="k">Premium Mix</span><span class="v">${fmt.pctPlain(a.ab)}</span></div>
+          <div class="pf-row"><span class="k">R12m</span><span class="v">${fmt.currency(a.net_r12m)}</span></div>
+        </div>
+        <div class="pf-section">
+          <h5>Quality</h5>
+          <div class="pf-row"><span class="k">R12m</span><span class="v">${fmt.currency(a.sthr)}</span></div>
+          <div class="pf-row"><span class="k">Output Ratio</span><span class="v">${a.st_si.toFixed(2)}</span></div>
+          <div class="pf-row"><span class="k">Availability</span><span class="v">${fmt.pctPlain(a.instock)}</span></div>
+          <div class="pf-row"><span class="k">Breadth</span><span class="v">${a.brread.toFixed(1)}</span></div>
+        </div>
+        <div class="pf-section">
+          <h5>Reach</h5>
+          <div class="pf-row"><span class="k">Active</span><span class="v">${a.ad}</span></div>
+          <div class="pf-row"><span class="k">Total</span><span class="v">${a.total_doors}</span></div>
+          <div class="pf-row"><span class="k">Retention</span><span class="v">${fmt.pctPlain(a.retention)}</span></div>
+          <div class="pf-row"><span class="k">Net Δ R12m</span><span class="v" style="color:${a.nd12>0?'var(--success)':'var(--danger)'}">${fmt.signed(a.nd12)}</span></div>
+        </div>
+        <div class="pf-section">
+          <h5>Engagement</h5>
+          <div class="pf-row"><span class="k">Active Users</span><span class="v">${fmt.num(a.rewards)}</span></div>
+          <div class="pf-row"><span class="k">Points</span><span class="v">${fmt.shortNum(a.points_apr)}</span></div>
+          <div class="pf-row"><span class="k">Warranty</span><span class="v">${fmt.pctPlain(a.warranty_rate)}</span></div>
+          <div class="pf-row"><span class="k">Penetration</span><span class="v">${fmt.pctPlain(a.penetration,0)}</span></div>
+        </div>
+        <div class="pf-section" style="grid-column:1/-1;border-top:1px dashed var(--line);padding-top:10px;">
+          <h5>Programs</h5>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 36px;">
+            <div>
+              <div class="pf-row"><span class="k">SI · YTD</span><span class="v">${fmt.currency(a.sc_si)}</span></div>
+              <div class="pf-row"><span class="k">ST · R12m</span><span class="v">${fmt.currency(a.sc_st)}</span></div>
+              <div class="pf-row"><span class="k">Adoption %</span><span class="v" style="color:${a.replen>=60?'var(--success)':a.replen>=50?'var(--warn)':'var(--danger)'}">${fmt.pctPlain(a.replen)} <span class="sub" style="color:var(--text-3);font-weight:400;">(${a.reordered}/${a.mou})</span></span></div>
+            </div>
+            <div>
+              <div class="pf-row"><span class="k">Inventory MSRP</span><span class="v">${fmt.currency(a.sc_msrp)}</span></div>
+              <div class="pf-row"><span class="k">Aged Value (>180d)</span><span class="v" style="color:${a.sc_aged_pct>=50?'var(--danger)':a.sc_aged_pct>=40?'var(--warn)':'var(--success)'}">${fmt.currency(a.sc_aged_msrp)}</span></div>
+              <div class="pf-row"><span class="k">Aged %</span><span class="v" style="color:${a.sc_aged_pct>=50?'var(--danger)':a.sc_aged_pct>=40?'var(--warn)':'var(--success)'}">${fmt.pctPlain(a.sc_aged_pct)} <span class="sub" style="color:var(--text-3);font-weight:400;">(${fmt.num(a.sc_aged_units)})</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;}).join('')}</div>`;
+}
+
+let compareView = 'matrix';
+function renderCompare(){
+  if (compareView === 'matrix') { $('compare-body').innerHTML = renderMatrix(); return; }
+  $('compare-body').innerHTML = renderProfiles();
+  const prev = $('pg-prev'), next = $('pg-next');
+  if (prev) prev.addEventListener('click', () => { profilesPage--; renderCompare(); });
+  if (next) next.addEventListener('click', () => { profilesPage++; renderCompare(); });
+  document.querySelectorAll('#compare-body .pg-dot').forEach(d => d.addEventListener('click', () => {
+    profilesPage = parseInt(d.dataset.page, 10); renderCompare();
+  }));
+}
+$('btn-matrix').addEventListener('click', () => { compareView='matrix'; $('btn-matrix').classList.add('active'); $('btn-profiles').classList.remove('active'); renderCompare(); });
+$('btn-profiles').addEventListener('click', () => { compareView='profiles'; $('btn-profiles').classList.add('active'); $('btn-matrix').classList.remove('active'); renderCompare(); });
+
+// ============ Detail panel ============
+function renderDetail(){
+  const a = AES.find(x=>x.name===selectedAe);
+  if (!a) return;
+  const sortedByYtd = [...AES].sort((x,y)=>y.net-x.net);
+  const rank = sortedByYtd.findIndex(x=>x.name===a.name) + 1;
+  const allAes = [...AES].sort((x,y)=>y.net-x.net);
+  const switcherHtml = `<div class="ae-switcher">
+    <span class="ae-switcher-label">Switch Member</span>
+    ${allAes.map(x => `<button class="ae-switch ${x.name===selectedAe?'active':''}" data-ae="${x.name}">
+      <span class="avatar" style="background:${avatarBg(x.name)}">${initials(x.name)}</span>
+      ${x.name.split(' ')[0]}
+    </button>`).join('')}
+  </div>`;
+  $('detail-card').innerHTML = switcherHtml + `
+    <div class="detail-header">
+      <div class="info">
+        <h2><div class="avatar" style="background:${avatarBg(a.name)};width:36px;height:36px;font-size:13px">${initials(a.name)}</div>${a.name}</h2>
+        <div class="meta-row">
+          <span>Reports to <b>${a.rm}</b></span>
+          <span><b>${a.customers}</b> active customers</span>
+          <span><b>${a.total_doors}</b> total doors</span>
+          <span><b>${a.reporting_doors}</b> reporting</span>
+          <span><b>${a.mou}</b> program accounts</span>
+        </div>
+      </div>
+      <div class="rank-badge">Rank #${rank} of ${AES.length}</div>
+    </div>
+    <div class="detail-trend">
+      <h4>Volume · Last 12 Months</h4>
+      <div class="spark-wrap"><canvas id="spk-${a.name.replace(/\s+/g,'-')}"></canvas></div>
+    </div>
+    <div class="kpi-families">
+      <div class="family-block">
+        <h4>Performance</h4>
+        <div class="kpi-row"><span class="key">Volume · This Month</span><span class="val">${fmt.currency(a.net_apr)}</span></div>
+        <div class="kpi-row"><span class="key">Volume · YTD</span><span class="val">${fmt.currency(a.net)}</span></div>
+        <div class="kpi-row"><span class="key">YoY Growth</span><span class="val" style="color:${a.yoy>=0?'var(--success)':'var(--danger)'}">${fmt.pct(a.yoy)}</span></div>
+        <div class="kpi-row"><span class="key">Grade Premium Mix</span><span class="val">${fmt.pctPlain(a.ab)}</span></div>
+        <div class="kpi-row"><span class="key">Volume · R12m</span><span class="val">${fmt.currency(a.net_r12m)}</span></div>
+      </div>
+      <div class="family-block">
+        <h4>Quality</h4>
+        <div class="kpi-row"><span class="key">Output · This Month</span><span class="val">${fmt.currency(a.sthr_apr)}</span></div>
+        <div class="kpi-row"><span class="key">Sell-through · R12m</span><span class="val">${fmt.currency(a.sthr)}</span></div>
+        <div class="kpi-row"><span class="key">Output Ratio Ratio</span><span class="val">${a.st_si.toFixed(2)}<span class="sub">vs all SI</span></span></div>
+        <div class="kpi-row"><span class="key">Availability %</span><span class="val">${fmt.pctPlain(a.instock)}</span></div>
+        <div class="kpi-row"><span class="key">Reporting Units</span><span class="val">${a.reporting_doors}</span></div>
+        <div class="kpi-row"><span class="key">Category Breadth</span><span class="val">${a.brread.toFixed(1)}<span class="sub">divisions</span></span></div>
+      </div>
+      <div class="family-block">
+        <h4>Reach</h4>
+        <div class="kpi-row"><span class="key">Active Reach</span><span class="val">${a.ad}</span></div>
+        <div class="kpi-row"><span class="key">Total Reach</span><span class="val">${a.total_doors}</span></div>
+        <div class="kpi-row"><span class="key">Retention %</span><span class="val">${fmt.pctPlain(a.retention)}</span></div>
+        <div class="kpi-row"><span class="key">Reach Added · R12m</span><span class="val" style="color:var(--success)">+${a.doors_added}</span></div>
+        <div class="kpi-row"><span class="key">Reach Exited · R12m</span><span class="val" style="color:var(--danger)">-${a.doors_exited}</span></div>
+        <div class="kpi-row"><span class="key">Net Reach · R12m</span><span class="val" style="color:${a.nd12>=0?'var(--success)':'var(--danger)'}">${fmt.signed(a.nd12)}</span></div>
+      </div>
+      <div class="family-block">
+        <h4>Engagement</h4>
+        <div class="kpi-row"><span class="key">Rewards Active Users</span><span class="val">${fmt.num(a.rewards)}</span></div>
+        <div class="kpi-row"><span class="key">Activity Score · April</span><span class="val">${fmt.shortNum(a.points_apr)}</span></div>
+        <div class="kpi-row"><span class="key">Completion Rate</span><span class="val">${fmt.pctPlain(a.warranty_rate)}</span></div>
+        <div class="kpi-row"><span class="key">Penetration</span><span class="val">${fmt.pctPlain(a.penetration,0)}</span></div>
+        <div class="kpi-row"><span class="key">Engaged Accounts</span><span class="val">${a.rewards_customers}</span></div>
+      </div>
+    </div>
+    <div class="family-block" style="grid-column:1/-1;margin-top:20px;">
+      <h4>Programs</h4>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 70px;">
+        <div>
+          <div class="kpi-row"><span class="key">Program A · SI · April</span><span class="val">${fmt.currency(a.sc_si_apr)}</span></div>
+          <div class="kpi-row"><span class="key">Program A · SI · YTD</span><span class="val">${fmt.currency(a.sc_si)}</span></div>
+          <div class="kpi-row"><span class="key">Program A · SI · R12m</span><span class="val">${fmt.currency(a.sc_si_r12m)}</span></div>
+        </div>
+        <div>
+          <div class="kpi-row"><span class="key">Program A · ST · April</span><span class="val">${fmt.currency(a.sc_st_apr)}</span></div>
+          <div class="kpi-row"><span class="key">Program A · ST · R12m</span><span class="val">${fmt.currency(a.sc_st_r12m)}</span></div>
+          <div class="kpi-row"><span class="key">Avg Days in Location</span><span class="val">${a.sc_avg_daysin.toFixed(0)} days</span></div>
+        </div>
+        <div>
+          <div class="kpi-row"><span class="key">Program Accounts</span><span class="val">${a.mou}</span></div>
+          <div class="kpi-row"><span class="key">Reordered in April</span><span class="val">${a.reordered}</span></div>
+          <div class="kpi-row"><span class="key">Monthly Adoption %</span><span class="val" style="color:${a.replen>=60?'var(--success)':a.replen>=50?'var(--warn)':'var(--danger)'}">${fmt.pctPlain(a.replen)}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="family-block" style="grid-column:1/-1;margin-top:18px;">
+      <h4>Program Aging · Active Accounts</h4>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 70px;">
+        <div>
+          <div class="kpi-row"><span class="key">Total Units in Stock</span><span class="val">${fmt.num(a.sc_units)}</span></div>
+          <div class="kpi-row"><span class="key">Total Value Exposure</span><span class="val">${fmt.currency(a.sc_msrp)}</span></div>
+        </div>
+        <div>
+          <div class="kpi-row"><span class="key">Aged Units (>180d)</span><span class="val" style="color:${a.sc_aged_pct>=50?'var(--danger)':a.sc_aged_pct>=40?'var(--warn)':'var(--success)'}">${fmt.num(a.sc_aged_units)} <span class="sub">(${fmt.pctPlain(a.sc_aged_pct)})</span></span></div>
+          <div class="kpi-row"><span class="key">Aged Value Exposure</span><span class="val" style="color:${a.sc_aged_pct>=50?'var(--danger)':'var(--warn)'}">${fmt.currency(a.sc_aged_msrp)}</span></div>
+        </div>
+        <div>
+          <div class="kpi-row"><span class="key">0–90 days</span><span class="val">${fmt.num(a.sc_b1)}</span></div>
+          <div class="kpi-row"><span class="key">90–180 days</span><span class="val">${fmt.num(a.sc_b2)}</span></div>
+          <div class="kpi-row"><span class="key">180–365 days</span><span class="val" style="color:var(--warn)">${fmt.num(a.sc_b3)}</span></div>
+          <div class="kpi-row"><span class="key">365+ days</span><span class="val" style="color:var(--danger)">${fmt.num(a.sc_b4)}</span></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const cx = ctx('spk-' + a.name.replace(/\s+/g,'-'));
+  new Chart(cx,{type:'line',data:{labels:TREND_MONTHS,datasets:[{
+    data: TREND_BY_AE[a.name].map(v=>v/1e6),
+    borderColor:'#93341C', backgroundColor:fade(cx,'#93341C',80), borderWidth:2, fill:true, tension:.35, pointRadius:2,
+  }]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+    tooltip:{callbacks:{label:c=>'$'+c.parsed.y.toFixed(2)+'M'}}},
+    scales:{x:{display:false},y:{display:false}}}});
+  // Wire up member switcher chips inside the detail panel
+  document.querySelectorAll('#detail-card .ae-switch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedAe = btn.dataset.ae;
+      renderLeaderboard();
+      renderDetail();
+    });
+  });
+}
+
+// ============ Sidebar nav scroll-sync ============
+const sections = ['summary','trends','leaderboard','compare','detail'];
+const navLinks = document.querySelectorAll('.nav a');
+window.addEventListener('scroll', () => {
+  let active = sections[0];
+  for (const id of sections) { const el=$(id); if (el && el.getBoundingClientRect().top < 120) active = id; }
+  navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + active));
+});
+navLinks.forEach(a => a.addEventListener('click', e => { e.preventDefault(); $(a.getAttribute('href').slice(1)).scrollIntoView({behavior:'smooth'}); }));
+$('btn-export').addEventListener('click', () => window.print());
+
+// ============ Init ============
+renderHero();
+renderTrend();
+renderLeaderboard();
+renderCompare();
+renderDetail();
+</script>
+</body>
+</html>

@@ -23,11 +23,16 @@ from pathlib import Path
 import appcheck
 import datasources
 import registry
+import s3source
 from auth import CURRENT_USER_EMAIL
 from config import settings
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,39}$")
 _GUIDE_PATH = Path(__file__).resolve().parent.parent / "docs" / "authoring-guide.md"
+_THEME_PATH = Path(__file__).resolve().parent.parent / "static" / "dashboard_blank.html"
+# Logo served from this origin; safe under the app CSP (img-src 'self').
+# Drop your own logo at static/logo.png (not included in the repo).
+_LOGO_URL = "/static/logo.png"
 
 
 def _caller(passed: str | None) -> str:
@@ -53,6 +58,36 @@ def register(mcp) -> None:
             return {"ok": False, "error": f"Guide unavailable: {exc}"}
 
     @mcp.tool
+    async def get_app_theme() -> dict:
+        """Get the DEFAULT dashboard theme to start a new app from.
+
+        Use this as the basis for every new app UNLESS the user asks for a
+        different / custom look. Returns the full HTML of the template
+        (sidebar + topbar + card sections, light theme, Chart.js) with
+        `{{ PLACEHOLDER }}` markers and demo-data constants to replace. It is
+        already CSP-clean (no inline on* handlers). Keep the logo — it
+        loads from `/static/logo.png` (served from this origin). Swap in your
+        real title/labels and wire the sections to `AppData.query(...)`.
+        """
+        try:
+            return {
+                "ok": True,
+                "theme": _THEME_PATH.read_text(encoding="utf-8"),
+                "logo_url": _LOGO_URL,
+            }
+        except OSError as exc:
+            return {"ok": False, "error": f"Theme unavailable: {exc}"}
+
+    @mcp.tool
+    async def list_categories() -> dict:
+        """List the canonical catalog categories to pass to create_app/update_app.
+
+        Pick the closest match for an app's `category` so it lands in the right
+        catalog section; unrecognized values fall back to "Other".
+        """
+        return {"categories": settings.category_list}
+
+    @mcp.tool
     async def check_app(html: str, has_datasource: bool = True) -> dict:
         """Static-check app HTML BEFORE create_app/publish (no side effects).
 
@@ -71,7 +106,9 @@ def register(mcp) -> None:
         title: str,
         html: str,
         datasource: str | None = None,
+        s3_source: str | None = None,
         description: str = "",
+        category: str | None = None,
         created_by: str | None = None,
         access_list: list[str] | None = None,
         allow_inline_data: bool = False,
@@ -88,11 +125,18 @@ def register(mcp) -> None:
                 use AppData.query() from your JavaScript to fetch it at runtime
                 (see module doc). Do NOT embed credentials, connection strings, or
                 query results.
-            datasource: Source name the app reads from. OPTIONAL — omit it to
-                create a datasource-less static app (no live data, no proxy).
-                When set, the runtime proxy is pinned to this source and the app's
-                data must be loaded live via AppData.query() (not baked in).
+            datasource: SQL source name the app reads from via AppData.query().
+                OPTIONAL. When set, the runtime SQL proxy is pinned to this source
+                and the app's data must be loaded live (not baked in).
+            s3_source: S3 object source the app reads files from via
+                AppData.s3.list()/get(). OPTIONAL and independent of `datasource`
+                — an app may use a SQL source, an S3 source, both, or neither.
+                See list_s3_sources for available names.
             description: Short description for the catalog card.
+            category: Which catalog section the app appears under. Choose one of
+                the canonical categories (see list_categories / the authoring
+                guide); anything unrecognized falls back to "Other". Keeps the
+                catalog organized instead of a flat wall of cards.
             created_by: Optional author identity (defaults to the caller).
             access_list: Optional list of emails allowed to VIEW the published
                 app. Omit or pass [] to make it public (any signed-in org user).
@@ -110,12 +154,19 @@ def register(mcp) -> None:
         if not (html or "").strip():
             return {"ok": False, "error": "html is required."}
 
-        # datasource is optional: omit for a static app. Only validate/bind one
-        # when explicitly provided.
+        # datasource / s3_source are both optional and independent. Validate each
+        # only when explicitly provided.
         ds = (datasource or "").strip()
         if ds:
             try:
                 datasources.get_source(ds)
+            except KeyError as exc:
+                return {"ok": False, "error": str(exc)}
+
+        s3 = (s3_source or "").strip()
+        if s3:
+            try:
+                s3source.get_source(s3)
             except KeyError as exc:
                 return {"ok": False, "error": str(exc)}
 
@@ -129,9 +180,11 @@ def register(mcp) -> None:
                 "warnings": check["warnings"],
             }
 
+        cat = settings.match_category(category)
+
         try:
             await registry.create_app(slug, title, description, ds, html,
-                                      _caller(created_by), access_list)
+                                      _caller(created_by), access_list, s3, cat)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -140,6 +193,8 @@ def register(mcp) -> None:
             "status": "draft",
             "slug": slug,
             "datasource": ds or None,
+            "s3_source": s3 or None,
+            "category": cat,
             "preview_url": _app_url(slug),
             "warnings": check["warnings"],
             "message": (
@@ -154,14 +209,19 @@ def register(mcp) -> None:
         title: str | None = None,
         html: str | None = None,
         datasource: str | None = None,
+        s3_source: str | None = None,
         description: str | None = None,
+        category: str | None = None,
         access_list: list[str] | None = None,
         allow_inline_data: bool = False,
     ) -> dict:
         """Update an existing app's HTML / title / datasource. Only sent fields change.
 
-        datasource: omit to keep the current source; pass a name to rebind; pass
-        "" to clear it (make the app static, no live data).
+        datasource: omit to keep the current SQL source; pass a name to rebind;
+        pass "" to clear it (no live SQL data).
+
+        s3_source: omit to keep the current S3 source; pass a name to rebind;
+        pass "" to clear it. Independent of datasource.
 
         access_list, when provided, replaces the app's viewer allow list ([] =
         public). Omit it to leave the current access unchanged. To edit only the
@@ -184,6 +244,16 @@ def register(mcp) -> None:
             except KeyError as exc:
                 return {"ok": False, "error": str(exc)}
 
+        s3 = ((app.get("s3_source") or "") if s3_source is None else s3_source).strip()
+        if s3:
+            try:
+                s3source.get_source(s3)
+            except KeyError as exc:
+                return {"ok": False, "error": str(exc)}
+
+        cat = (app.get("category") or "Other") if category is None \
+            else settings.match_category(category)
+
         check = {"warnings": []}
         if html is not None:
             check = appcheck.check_html(html, has_datasource=bool(ds))
@@ -204,11 +274,14 @@ def register(mcp) -> None:
                 ds,
                 html if html is not None else app["html"],
                 access_list if access_list is not None else app["access_list"],
+                s3,
+                cat,
             )
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "slug": slug, "status": app["status"],
-                "preview_url": _app_url(slug), "warnings": check["warnings"]}
+                "category": cat, "preview_url": _app_url(slug),
+                "warnings": check["warnings"]}
 
     @mcp.tool
     async def set_app_access(slug: str, access_list: list[str]) -> dict:
@@ -281,6 +354,8 @@ def register(mcp) -> None:
                     "title": r["title"],
                     "status": r["status"],
                     "datasource": r["datasource"],
+                    "s3_source": r.get("s3_source") or None,
+                    "category": r.get("category") or "Other",
                     "created_by": r.get("created_by"),
                     "access": "public" if not r.get("access_list") else "restricted",
                     "access_list": r.get("access_list") or [],

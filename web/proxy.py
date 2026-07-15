@@ -58,7 +58,18 @@ def register(router: APIRouter) -> None:
             return JSONResponse({"error": "'params' must be an array."}, status_code=400)
 
         try:
-            result = await run_validated(app["datasource"], sql, params)
+            page = int(payload.get("page") or 0)
+            page_size = payload.get("page_size")
+            page_size = int(page_size) if page_size is not None else None
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": "'page' and 'page_size' must be integers."}, status_code=400
+            )
+
+        try:
+            result = await run_validated(
+                app["datasource"], sql, params, page=page, page_size=page_size
+            )
         except SQLValidationError as exc:
             return JSONResponse({"error": f"Rejected: {exc}"}, status_code=400)
         except KeyError as exc:

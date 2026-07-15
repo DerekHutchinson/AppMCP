@@ -3,6 +3,29 @@
 You are building a **single, self-contained HTML document** that will be served
 at a permanent, authenticated URL. Follow these rules and it will work.
 
+## Start from the default theme
+
+**By default, base every new app on the default dashboard theme.** Call the
+`get_app_theme` MCP tool to fetch it — a CSP-clean template (sidebar +
+topbar + card sections, light theme, Chart.js already wired). Replace its
+`{{ PLACEHOLDER }}` markers and demo-data constants with the app's real title,
+labels, and live `AppData.query(...)` data; add/remove sections as needed.
+
+Only depart from this theme when the **user explicitly asks for a different or
+custom look** (their own layout, colors, or branding). In that case, build to
+their spec.
+
+**Always include the logo.** The logo is served from this origin
+at `/static/logo.png` — reference it with a plain `<img>` (allowed by the app
+CSP, `img-src 'self'`):
+
+```html
+<img src="/static/logo.png" alt="Logo" style="max-width:280px;height:auto" />
+```
+
+The default theme already places it in the sidebar; if you build a custom layout,
+still add the logo (e.g. in the header/sidebar) unless the user says otherwise.
+
 ## The data contract
 
 Do **not** put any database connection string, credentials, or secrets in the
@@ -10,16 +33,52 @@ HTML. To read data at runtime, call the injected client from your JavaScript:
 
 ```js
 const result = await AppData.query(sql, params);
-// result.columns -> ["rep", "total"]
-// result.rows    -> [{ rep: "...", total: 123 }, ...]
+// result.columns   -> ["rep", "total"]
+// result.rows      -> [{ rep: "...", total: 123 }, ...]
+// result.truncated -> true if the row ceiling was hit (there was more data)
 ```
 
 - `sql` is a single **read-only SELECT**. Tables must be **schema-qualified**
   (`schema.table`) and within the datasource's allowed schemas.
 - Use **positional params** `$1..$n` and pass their values as the `params`
   array (in order). Never string-concatenate user input into SQL.
-- Results are **row-capped** by the server. Aggregate/limit in SQL for big tables.
 - Validate your SQL with the `run_query` MCP tool while you build.
+
+> **BigQuery sources:** the "schema" is a **dataset**, so qualify tables as
+> `dataset.table` (the dataset must be in the source's allowed schemas). Write
+> GoogleSQL; keep using `$1..$n` params. Everything else — `AppData.query()`,
+> pagination, `queryPages()` — works identically. Prefer aggregating in SQL:
+> each query is capped by a bytes-scanned ceiling, so `SELECT *` on a huge table
+> may be rejected — add `WHERE`/`GROUP BY`/`LIMIT` and select only needed columns.
+
+### Large result sets & pagination
+
+You don't write pagination into your SQL — the server paginates **any** SELECT
+for you. `AppData.query()` transparently fetches page after page and concatenates
+them, so a plain `SELECT ...` returns everything up to a safety **ceiling** (the
+server's `MAX_QUERY_ROWS`, default 50,000). If that ceiling is hit,
+`result.truncated` is `true` and you should tell the user the view is partial.
+
+- **For dashboards, aggregate in SQL** (`GROUP BY`, `SUM`, `COUNT`, `LIMIT`) —
+  don't pull tens of thousands of raw rows into the browser just to reduce them
+  client-side. This is faster and avoids hitting the ceiling.
+- **For genuinely large sets** (big tables, exports, virtualized grids), use the
+  streaming iterator so you render page-by-page and never hold everything at
+  once:
+
+```js
+for await (const page of AppData.queryPages(sql, params)) {
+  // page.rows is one chunk (page.page, page.page_size, page.has_more available)
+  appendRows(page.rows);           // render incrementally
+}
+```
+
+- Pagination uses `LIMIT/OFFSET` under the hood. For **stable** pages across
+  fetches, add an `ORDER BY` on a unique/stable column (e.g. an id or timestamp);
+  without one, row order between pages isn't guaranteed. (On SQL Server, keep the
+  `ORDER BY` out of the query — the server adds paging itself.)
+- You can tune per call: `AppData.query(sql, params, { maxRows: 5000 })` to cap
+  the auto-fetch, or `{ pageSize: 500 }` to change the chunk size.
 
 `AppData` is injected by the server at serve time — you do **not** define it, and
 you do **not** know or need the datasource name inside the app (when a datasource
@@ -43,6 +102,16 @@ For datasource-bound apps, `create_app`/`update_app` run a static check and
 results). Run `check_app(html)` first to see the errors/warnings and fix them.
 The only legitimate inline data is small **reference** data (lookup maps) or map
 **geometry** (TopoJSON) — for those rare cases pass `allow_inline_data=true`.
+
+## Categorize your app
+
+Pass a `category` to `create_app` so the app lands in the right catalog section
+(the catalog groups apps into collapsible sections by category instead of one
+long list). Call `list_categories` for the current canonical list — defaults are
+**Sales, Inventory, Customers, Rewards, Ecommerce, Finance, Operations,
+Marketing, Reports, Tools, Demo**, with **Other** as the fallback. Pick the closest
+match; an unrecognized value is normalized to "Other". You can change it later
+with `update_app(category=...)` (or an author can edit it in `/manage`).
 
 ## Who can view the app
 
@@ -294,8 +363,243 @@ For a non-US or point map the same rules apply: fetch geometry from this origin
 if the server hosts it, otherwise inline a small projection + geometry, or plot
 bubbles at an inline lat/long lookup, and color/size by values from `AppData.query`.
 
+## Sending email
+
+Apps can send email through a server-side SendGrid integration via
+`AppData.sendEmail(...)`. Like `AppData.query`, this posts to the app's own
+origin (`/a/{slug}/email`) — the app never holds credentials or sets the sender.
+
+```js
+const res = await AppData.sendEmail({
+  to: "jane.doe@example.com",            // or an array of addresses
+  subject: "Weekly rewards summary",
+  html: "<h1>Summary</h1><p>…</p>",       // html and/or text
+  text: "Summary…"
+});
+// res -> { ok: true, sent: 1, recipients: [...] }
+```
+
+Constraints (enforced server-side):
+
+- **Internal recipients only.** Every address must be on the org domain
+  (`@example.com`); external recipients are rejected. This is an anti-relay
+  guard, not something you can override from the app.
+- **The From address is fixed** by the server; replies go to the signed-in user.
+- **Provide `html` and/or `text`,** plus a non-empty `subject`. Build the body
+  from data you already fetched with `AppData.query` (escape user/data values).
+- **Caps apply:** a max number of recipients per send and a per-app per-minute
+  rate limit; `AppData.sendEmail` throws on any violation, so handle errors.
+- If email isn't configured on the server, the call fails with a clear error —
+  treat sending as best-effort and surface failures in the UI.
+
+### Two ways to send mail — which to use
+
+There are two send paths and they do **not** conflict; pick based on who the mail
+should come from:
+
+- **`AppData.sendEmail(...)` (SendGrid) — use for system/notification-style mail.**
+  Sent from a fixed service address (replies go to the signed-in user),
+  **internal recipients only**, and it does **not** appear in anyone's mailbox
+  Sent Items. No Graph sign-in needed. Best for "the app is notifying people"
+  (alerts, digests, reports) to `@example.com` addresses.
+- **`AppData.graph("/me/sendMail", ...)` (Microsoft Graph) — use for "send as me".**
+  Sent from the **signed-in user's own mailbox** (lands in their Sent Items,
+  threads naturally) and **may go to external recipients**. Requires the user to
+  have signed in with Graph enabled. Best when the message should genuinely come
+  from the person using the app, or must reach someone outside the org.
+
+Rule of thumb: notifications *from the app* → `sendEmail`; a message *from the
+user* (or to an external address) → Graph `/me/sendMail`.
+
+## Microsoft Graph (the signed-in user's mail & calendar)
+
+Apps can query Microsoft Graph **as the person viewing the app** through
+`AppData.graph(path, opts)`. Like the other helpers it posts to the app's own
+origin (`/a/{slug}/graph`); the server attaches the viewer's delegated token —
+the app never sees a token, and every call is automatically scoped to that
+user's own data (`/me`).
+
+```js
+// Read the 10 most recent inbox messages
+const mail = await AppData.graph("/me/messages", {
+  query: { $top: 10, $select: "subject,from,receivedDateTime", $orderby: "receivedDateTime desc" }
+});
+mail.value.forEach(m => console.log(m.subject));
+
+// Read today's calendar events
+const events = await AppData.graph("/me/calendarView", {
+  query: { startDateTime: "2026-07-08T00:00:00", endDateTime: "2026-07-08T23:59:59" }
+});
+
+// Send mail as the signed-in user
+await AppData.graph("/me/sendMail", {
+  method: "POST",
+  body: { message: {
+    subject: "Hi",
+    body: { contentType: "Text", content: "Sent from an app." },
+    toRecipients: [{ emailAddress: { address: "jane.doe@example.com" } }]
+  } }
+});
+
+// Create a calendar event
+await AppData.graph("/me/events", {
+  method: "POST",
+  body: { subject: "Sync", start: { dateTime: "2026-07-09T15:00:00", timeZone: "Eastern Standard Time" },
+          end: { dateTime: "2026-07-09T15:30:00", timeZone: "Eastern Standard Time" } }
+});
+
+// List OneDrive files in the root folder
+const files = await AppData.graph("/me/drive/root/children", {
+  query: { $select: "name,size,lastModifiedDateTime,webUrl", $top: 25 }
+});
+files.value.forEach(f => console.log(f.name, f.size));
+
+// List recent Teams chats, then read messages in one
+const chats = await AppData.graph("/me/chats", { query: { $top: 20 } });
+const msgs = await AppData.graph(`/me/chats/${chats.value[0].id}/messages`, {
+  query: { $top: 20 }
+});
+```
+
+`opts`: `method` (default `GET`), `query` (object → OData query params like
+`$select`, `$top`, `$filter`, `$orderby`), and `body` (object, for writes). The
+call returns the parsed Graph JSON (e.g. `{ value: [...] }` for collections).
+
+Constraints (enforced server-side):
+
+- **`/me` only.** Paths must target the current user; you cannot read other
+  users or the directory at large. The path is matched against an allowlist.
+- **Allowed operations:** read `/me` profile, `/me/messages`, `/me/mailFolders`,
+  `/me/events`, `/me/calendar(s)`, `/me/calendarView`, `/me/contacts`,
+  `/me/people`, `/me/manager`, `/me/directReports`, `/me/drive(s)` (OneDrive
+  files & folders), `/me/chats` (Teams chats & messages); **write:**
+  `POST /me/sendMail` and create/update/delete your own calendar events
+  (`/me/events`). Anything else is rejected — don't try to move/delete mail,
+  write to files/chats, or read `/users/{other}`.
+- **Narrow your reads.** Use `$select` and `$top`; oversized responses are
+  rejected. A per-session per-minute rate limit applies.
+- **Drive & chats are read-only and JSON-only.** You can list/inspect OneDrive
+  items and read Teams chats/messages, but you can't upload/modify files, post
+  chat messages, or download raw binary file content (`/content`) — the proxy
+  returns JSON only and caps the response size. Use `webUrl` to link a user to a
+  file rather than streaming it through the app.
+- **This is the viewer's personal mailbox/calendar.** Only request what the app
+  genuinely needs, escape any values you render, and handle errors (the promise
+  throws on any rejection).
+- If Graph isn't configured, or the user's Graph session has expired, the call
+  fails with a clear error asking them to sign out and back in.
+- **Transient errors are retried automatically.** Exchange occasionally returns a
+  503 `ErrorInternalServerTransientError` (e.g. "Cannot query rows in a table")
+  on otherwise-valid mailbox queries; the server retries a few times with backoff
+  before surfacing it. Keep queries simple (avoid combining `$filter` with an
+  `$orderby` on a different property — sort or filter client-side instead).
+
+## S3 files (buckets as a data source)
+
+Apps can read files from an S3 bucket through `AppData.s3`. Like the other
+helpers it posts to the app's own origin (`/a/{slug}/s3`); the server holds the
+AWS key/secret and the app never sees them. This is a **separate binding** from a
+SQL `datasource` — an app can use a SQL source, an S3 source, both, or neither.
+Bind one at create time with `create_app(..., s3_source="reports")`; discover the
+available names with `list_s3_sources` and browse keys with `list_s3_objects`.
+
+```js
+// List objects under a folder (keys are RELATIVE to the source's own prefix)
+const files = await AppData.s3.list("2026/", { maxKeys: 200 });
+files.forEach(f => console.log(f.key, f.size, f.last_modified));
+
+// Fetch one object's contents
+const obj = await AppData.s3.get("2026/q2-summary.csv");
+if (obj.encoding === "text") {
+  const rows = obj.body.trim().split("\n").map(line => line.split(","));
+  // ...render rows...
+} else {
+  // Binary objects come back base64-encoded in obj.body (obj.encoding === "base64").
+}
+```
+
+`AppData.s3.list(prefix, opts)` returns an array of `{key, size, last_modified}`;
+`AppData.s3.get(key)` returns `{key, size, content_type, encoding, body}` where
+`encoding` is `"text"` (utf-8) or `"base64"` (binary).
+
+Constraints (enforced server-side):
+
+- **Read-only.** Only list + get; there is no upload/write/delete.
+- **Confined to the source.** Each source is pinned to one bucket and an optional
+  key prefix. Keys you pass are **relative** to that prefix — you cannot escape it
+  (no `..`, no absolute keys, no other bucket).
+- **Size cap.** A single `get` is capped (default 5 MiB); larger objects are
+  rejected — split big files or store pre-aggregated extracts. `list` returns a
+  capped number of keys per call.
+- **Parse client-side.** The server returns raw bytes; parse CSV/JSON/text in the
+  app. A per-session per-minute rate limit applies, and `AppData.s3` throws on any
+  error, so handle failures in the UI.
+- If S3 isn't configured on the server, or the app has no `s3_source` bound, the
+  call fails with a clear error.
+
+## U.S. Census Bureau data (population, demographics, economy)
+
+Apps can pull official statistics from the **U.S. Census Bureau Data API** through
+`AppData.census(opts)`. Like the other helpers it posts to the app's own origin
+(`/a/{slug}/census`); the server holds the Census API key and the app never sees
+it. This is a **shared capability** (like email) — it needs no per-app binding and
+works in any app. Validate a query first with the `census_query` MCP tool.
+
+```js
+// Total population per state (ACS 1-year, 2022)
+const res = await AppData.census({
+  dataset: "acs/acs1",
+  year: 2022,
+  get: { variables: ["NAME", "B01001_001E"] },  // or get: ["NAME","B01001_001E"]
+  for: "state:*"
+});
+// res.columns -> ["NAME","B01001_001E","state"]
+// res.rows    -> [{ NAME: "New York", B01001_001E: "19677151", state: "36" }, ...]
+
+// A whole variable group, restricted to counties in New York (state FIPS 36)
+const counties = await AppData.census({
+  dataset: "acs/acs5",
+  year: 2022,
+  get: { group: "B19013" },        // median household income
+  for: "county:*",
+  in: "state:36"
+});
+
+// Decennial redistricting counts for one place
+const place = await AppData.census({
+  dataset: "dec/pl", year: 2020,
+  get: ["NAME", "P1_001N"], ucgid: "1600000US3651000"
+});
+```
+
+`opts`: `dataset` (path like `acs/acs1`, `acs/acs5/subject`, `dec/pl`), `year`
+(4-digit vintage; omit only for `timeseries/*` datasets), `get` (a string, an
+array of variables, or `{variables, group}`), `for`/`in` (geography, e.g.
+`"state:*"`, `"county:*"` + `"state:36"`), `ucgid`, `predicates` (extra filters),
+and `descriptive` (add variable labels). It returns `{columns, rows, count}` with
+each row a plain object keyed by the returned columns (values are **strings** — the
+Census API returns everything as text, so `Number(...)` before charting).
+
+Finding the right dataset/variables/geography: the sibling **USCensusMCP** server
+exposes `list-datasets`, `search-data-tables`, `fetch-dataset-geography`, and
+`resolve-geography-fips` to discover dataset ids, variable codes, and FIPS codes.
+
+Constraints (enforced server-side):
+
+- **Read-only public data.** No key or credentials in the app; the server adds them.
+- **Narrow your request.** Responses are size-capped — prefer specific variables
+  over huge groups across `for=*:*`, and filter with `for`/`in`. A per-session
+  per-minute rate limit applies.
+- **Values are strings.** Cast to `Number` before math/plotting; missing values may
+  come back as sentinels (e.g. negative codes) — validate before charting.
+- `AppData.census` **throws** on any error (bad dataset/variable, geography not
+  supported by the dataset, rate limit), so handle failures in the UI.
+- If Census isn't configured on the server, the call fails with a clear error.
+
 ## Checklist before publishing
 
+- [ ] Started from the default theme (`get_app_theme`) unless the user asked for a
+      custom look, and the logo (`/static/logo.png`) is included.
 - [ ] If the app uses a datasource: data is loaded live via `AppData.query()` on
       load and on every filter change — **no result rows baked into the HTML**.
       (Static apps with no datasource are exempt.)
@@ -303,7 +607,17 @@ bubbles at an inline lat/long lookup, and color/size by values from `AppData.que
 - [ ] All SQL is a single read-only SELECT with schema-qualified tables.
 - [ ] User inputs flow through `params` (`$1..$n`), never string-concatenated.
 - [ ] No inline `on*=` handlers; listeners attached via `addEventListener`.
-- [ ] Loading + error states handled (`AppData.query` throws on failure).
+- [ ] Loading + error states handled (`AppData.query`/`AppData.sendEmail` throw
+      on failure).
+- [ ] If sending email: recipients are internal (`@example.com`), subject +
+      body set, and data values are escaped in the message.
+- [ ] If using Graph: calls are `/me`-scoped and on the allowlist, reads use
+      `$select`/`$top`, and errors are handled.
+- [ ] If using S3: an `s3_source` is bound, keys are relative to the source
+      prefix, objects are within the size cap, and errors are handled.
+- [ ] If using Census: dataset/year/variables are valid (checked with
+      `census_query`), the request is narrowed with `for`/`in`, values are cast
+      from strings with `Number(...)`, and errors are handled.
 - [ ] Verified each query with the `run_query` tool.
 - [ ] For maps: geometry comes from this origin (`/static/us-states-10m.json`)
       or is inlined — never fetched from an external CDN; no Web Workers / Mapbox

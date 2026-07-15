@@ -58,7 +58,7 @@ SQL proxy** that holds the credentials.
 ## Run locally
 
 ```bash
-cp .env.example .env                        # fill in DATASOURCES_JSON (read-only DSNs)
+cp .env.example .env                          # fill in DATASOURCES_JSON (read-only DSNs)
 cp .env.local.example .env.local
 cp tool_access.example.json tool_access.json  # map your users to roles (gitignored)
 pip install -r requirements.txt
@@ -111,9 +111,9 @@ Azure app.
 | Path | Purpose |
 | --- | --- |
 | `config.py` | Settings (datasources, auth, CSP, session). |
-| `datasources.py` / `db.py` | Read-only data-source layer (Redshift/PG, MySQL, MSSQL). |
+| `datasources.py` / `db.py` | Read-only data-source layer (Redshift/PG, MySQL, MSSQL, BigQuery). |
 | `validation.py` / `appsql.py` | SQL guardrails + the shared validated runner. |
-| `catalog.py` | `information_schema` introspection (allowlist-aware). |
+| `catalog.py` | Schema introspection per source (allowlist-aware). |
 | `registry.py` | SQLite store of apps (HTML + datasource + lifecycle). |
 | `apphistory.py` | Optional git audit trail of app changes (best-effort). |
 | `auth.py` | Azure AD OAuth proxy + bearer auth for `/mcp`. |

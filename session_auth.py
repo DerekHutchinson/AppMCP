@@ -26,6 +26,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+import graph_tokens
 from auth import decode_jwt_payload, extract_email
 from config import settings
 
@@ -63,6 +64,17 @@ def _read_token(token: str) -> dict | None:
     return data
 
 
+def _session_data(request: Request) -> dict | None:
+    """Return the verified, non-expired session payload, or None."""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    data = _read_token(token)
+    if not data or data.get("k") != "sess":
+        return None
+    return data
+
+
 def session_email(request: Request) -> str | None:
     """Return the verified, non-expired session email, or None.
 
@@ -71,13 +83,18 @@ def session_email(request: Request) -> str | None:
     """
     if settings.local_dev_bypass:
         return settings.local_dev_email
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    data = _read_token(token)
-    if not data or data.get("k") != "sess":
-        return None
-    return data.get("email")
+    data = _session_data(request)
+    return data.get("email") if data else None
+
+
+def session_sid(request: Request) -> str | None:
+    """Return the session id used to look up the user's Graph tokens, or None.
+
+    The sid is only present when Graph was enabled at sign-in; older sessions and
+    the local-dev identity have none (Graph calls then report no session).
+    """
+    data = _session_data(request)
+    return data.get("sid") if data else None
 
 
 def _clear_session_cookie(response) -> None:
@@ -128,7 +145,7 @@ def register_routes(app: FastAPI) -> None:
             "client_id": settings.azure_client_id,
             "response_type": "code",
             "redirect_uri": _redirect_uri(),
-            "scope": "openid profile email",
+            "scope": settings.graph_login_scope,
             "state": state,
             "response_mode": "query",
         }
@@ -150,7 +167,7 @@ def register_routes(app: FastAPI) -> None:
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": _redirect_uri(),
-            "scope": "openid profile email",
+            "scope": settings.graph_login_scope,
         }
         if settings.azure_client_secret:
             data["client_secret"] = settings.azure_client_secret
@@ -180,8 +197,27 @@ def register_routes(app: FastAPI) -> None:
             return _notice_page("Access denied", "Your account is not on the allow list.", 403)
 
         ttl = settings.session_ttl_seconds
-        session = _make_token({"k": "sess", "email": email,
-                               "exp": int(time.time()) + ttl})
+        session_exp = int(time.time()) + ttl
+        payload = {"k": "sess", "email": email, "exp": session_exp}
+
+        # Capture the delegated Graph tokens (if Graph is enabled) so the app
+        # /a/{slug}/graph proxy can call Graph as this user. Tokens live
+        # server-side (encrypted), keyed by an opaque session id in the cookie.
+        if settings.graph_configured:
+            access_token = tokens.get("access_token")
+            if access_token:
+                sid = secrets.token_urlsafe(24)
+                expires_at = int(time.time()) + int(tokens.get("expires_in", 3600))
+                try:
+                    await graph_tokens.save(
+                        sid, email, access_token, tokens.get("refresh_token"),
+                        expires_at, session_exp,
+                    )
+                    payload["sid"] = sid
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[session-auth] graph token store failed: %s", exc)
+
+        session = _make_token(payload)
         redirect = RedirectResponse(_safe_next(state.get("next")), status_code=303)
         redirect.set_cookie(
             COOKIE_NAME, session, max_age=ttl, httponly=True, secure=True,
@@ -191,6 +227,13 @@ def register_routes(app: FastAPI) -> None:
         return redirect
 
     async def logout(request: Request):
+        sid = session_sid(request)
+        if sid:
+            try:
+                await graph_tokens.delete(sid)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[session-auth] graph token cleanup failed: %s", exc)
+
         if settings.local_dev_bypass or not (
             settings.azure_tenant_id and settings.azure_client_id
         ):
