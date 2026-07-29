@@ -7,6 +7,7 @@ read-only guardrails apply here as in the published app's runtime proxy.
 import catalog
 import censussource
 import datasources
+import llmsource
 import s3source
 from appsql import run_validated
 from auth import CURRENT_USER_EMAIL
@@ -110,6 +111,47 @@ def register(mcp) -> None:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"Census query failed: {exc}"}
+
+    @mcp.tool
+    async def list_llm_models() -> dict:
+        """List the LLM models an app may request via AppData.llm(), and the default.
+
+        The provider (OpenAI/Anthropic) is inferred from the model; the API key is
+        held only on the server. Returns {"default": "...", "models": [...]}.
+        """
+        if not settings.llm_configured:
+            return {"ok": False, "error": "The LLM proxy is not configured."}
+        return {"default": settings.llm_default_model, "models": settings.llm_models}
+
+    @mcp.tool
+    async def llm_ask(prompt: str, system: str | None = None,
+                      model: str | None = None, max_tokens: int | None = None,
+                      json: bool = False, images: list[str] | None = None,
+                      files: list[str] | None = None) -> dict:
+        """Send a prompt to the server-side LLM to test it before building an app.
+
+        Same path apps use at runtime via AppData.llm(). The API key is held only
+        on the server; choose a model from the allowlist (list_llm_models) or omit
+        it for the default. Set json=true to request a strict JSON object back.
+
+        Multimodal: `images` and `files` accept base64 or data-URL strings (images
+        need a vision-capable model; files must be PDFs). They attach to the prompt.
+
+        Returns {"text": "...", "model": "...", "usage": {...}}.
+        """
+        if not settings.llm_configured:
+            return {"ok": False, "error": "The LLM proxy is not configured."}
+        try:
+            return await llmsource.llm_complete(
+                CURRENT_USER_EMAIL.get() or "mcp",
+                system=system, prompt=prompt, model=model,
+                max_tokens=max_tokens, json_mode=json,
+                images=images, files=files,
+            )
+        except llmsource.LLMError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"LLM call failed: {exc}"}
 
     @mcp.tool
     async def list_schemas(datasource: str | None = None) -> dict:

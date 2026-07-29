@@ -77,6 +77,12 @@ class Settings(BaseSettings):
         "Operations,Marketing,Reports,Tools,Demo"
     )
 
+    # Icon shown on each catalog card. Authors/agents pick one of the SVG names
+    # discovered from static/icons/ (see icons.py). When an app has no icon set,
+    # the catalog falls back to the icon mapped to its category, and finally to
+    # `app_default_icon`. Both must name a file that exists in static/icons/.
+    app_default_icon: str = "grid"
+
     # --- web session ---
     # Lifetime of the browser session cookie, seconds (default 8h).
     session_ttl_seconds: int = 28800
@@ -124,6 +130,90 @@ class Settings(BaseSettings):
     census_max_response_bytes: int = 5_000_000
     # Per-request timeout talking to the Census API (seconds).
     census_timeout: int = 30
+
+    # --- Google Cloud Vision API proxy for /a/{slug}/vision ---
+    # Apps call AppData.vision(opts) which posts here; the server forwards the
+    # image bytes to https://vision.googleapis.com/v1/images:annotate with the API
+    # key held ONLY here (never in the app). Apps send inline image content
+    # (base64) and get annotations back (labels, text/OCR, objects, faces, etc.).
+    # Empty key or VISION_ENABLED=false disables the endpoint (returns 503).
+    vision_enabled: bool = False
+    vision_api_key: str = ""
+    # Per-session per-minute cap on Vision calls (runaway-loop guard).
+    vision_rate_per_min: int = 60
+    # Max annotate requests (images) in a single batch call.
+    vision_max_requests: int = 16
+    # Hard cap on the request body the app may post (bytes; base64 inflates ~33%).
+    vision_max_request_bytes: int = 12_000_000
+    # Hard cap on a single Vision response body forwarded back to the app (bytes).
+    vision_max_response_bytes: int = 5_000_000
+    # Per-request timeout talking to the Vision API (seconds).
+    vision_timeout: int = 30
+
+    # --- LLM chat proxy for /a/{slug}/llm (OpenAI + Anthropic) ---
+    # Apps call AppData.llm(opts) which posts here; the server forwards the chat
+    # completion to the provider with the API key held ONLY here (never in the
+    # app). Apps send {system, messages|prompt, model?, temperature?, maxTokens?,
+    # json?, images?, files?} and get {text, model, usage} back. The requested
+    # model must be on one of the allowlists below; the provider is inferred from
+    # which list it is in. Images (any vision-capable model) and PDF files are
+    # forwarded as inline base64. Set LLM_ENABLED=false or leave both keys empty
+    # to disable (returns 503).
+    llm_enabled: bool = False
+    llm_openai_api_key: str = ""
+    llm_anthropic_api_key: str = ""
+    llm_openai_base_url: str = "https://api.openai.com/v1"
+    llm_anthropic_base_url: str = "https://api.anthropic.com/v1"
+    llm_anthropic_version: str = "2023-06-01"
+    # Comma-separated allowlist of models an app may request, per provider. Only
+    # models listed here are accepted; anything else is rejected with a clear error.
+    llm_openai_models: str = "gpt-4o-mini,gpt-4o,gpt-5.2"
+    llm_anthropic_models: str = "claude-3-5-haiku-latest,claude-3-5-sonnet-latest,claude-sonnet-5"
+    # Default model used when the app doesn't specify one (must be on an allowlist).
+    llm_default_model: str = "gpt-4o-mini"
+    # Ceiling on output tokens per call (cost guard); an app's maxTokens is clamped
+    # to this, and it's the default when the app doesn't ask for one. Kept generous
+    # because reasoning models (claude-sonnet-5, gpt-5.x) spend output tokens on
+    # internal reasoning before the visible answer; too low a cap yields empty text.
+    llm_max_output_tokens: int = 32768
+    # Per-model output-token caps (comma-separated model:tokens). Providers 400 if
+    # max_tokens exceeds a model's real limit, so the effective cap for a call is
+    # min(requested-or-default, this model's cap here, llm_max_output_tokens). Models
+    # not listed fall back to llm_max_output_tokens. Keep the smaller/older models
+    # here so the global ceiling can stay high for the capable ones.
+    llm_model_max_output: str = (
+        "gpt-4o-mini:16384,gpt-4o:16384,"
+        "claude-3-5-haiku-latest:8192,claude-3-5-sonnet-latest:8192"
+    )
+    # Reasoning models spend output tokens on internal reasoning before the answer,
+    # so a small maxTokens starves the visible text. OpenAI reasoning models
+    # (gpt-5*, o1/o3/o4*) are detected automatically; list any others here (e.g.
+    # Anthropic reasoning models). Comma-separated exact model names.
+    llm_reasoning_models: str = "claude-sonnet-5"
+    # Minimum output-token budget forced for reasoning models (clamped to the
+    # model's own ceiling), applied even when an app requests fewer.
+    llm_reasoning_min_output_tokens: int = 8192
+    # Hard cap on total input characters (system + every message) accepted per call.
+    llm_max_input_chars: int = 100_000
+    # Per-session per-minute cap on LLM calls (runaway-loop guard).
+    llm_rate_per_min: int = 30
+    # Hard cap on the provider response body forwarded back to the app (bytes).
+    llm_max_response_bytes: int = 2_000_000
+    # Max attachments (images + files) across a single call.
+    llm_max_attachments: int = 8
+    # Hard cap on the raw request body the app may post (bytes; base64 inflates
+    # ~33%). Guards multimodal payloads before they're buffered/parsed.
+    llm_max_request_bytes: int = 20_000_000
+    # Allow apps to pass image URLs (images only); the server fetches them and
+    # forwards inline base64. SSRF-guarded (public hosts only, redirects revalidated,
+    # content-type + size checked). Set false to require inline base64 only.
+    llm_allow_image_urls: bool = True
+    # Per-fetch timeout when downloading an image URL (seconds).
+    llm_image_fetch_timeout: int = 15
+    # Hard cap on a single fetched image (bytes) before it's base64-encoded.
+    llm_max_image_bytes: int = 8_000_000
+    # Per-request timeout talking to the provider (seconds).
+    llm_timeout: int = 60
 
     # --- S3 object sources for the app-triggered /a/{slug}/s3 endpoint ---
     # Apps call AppData.s3.list()/get() which post here; the server fetches from
@@ -215,6 +305,28 @@ class Settings(BaseSettings):
         return "Other"
 
     @property
+    def category_icon_defaults(self) -> dict[str, str]:
+        """Best-effort category -> default icon name (used when an app has none).
+
+        Only takes effect if the named icon exists in static/icons/; otherwise
+        icons.resolve() falls back to `app_default_icon`.
+        """
+        return {
+            "Sales": "sales",
+            "Inventory": "inventory",
+            "Customers": "customers",
+            "Rewards": "rewards",
+            "Ecommerce": "ecommerce",
+            "Finance": "finance",
+            "Operations": "operations",
+            "Marketing": "marketing",
+            "Reports": "report",
+            "Tools": "tools",
+            "Demo": "star",
+            "Other": "grid",
+        }
+
+    @property
     def email_configured(self) -> bool:
         """True when the SendGrid email endpoint can operate."""
         return bool(self.sendgrid_api_key.strip() and self.email_from.strip())
@@ -259,6 +371,93 @@ class Settings(BaseSettings):
     def census_configured(self) -> bool:
         """True when the Census Data API proxy can operate (needs an API key)."""
         return bool(self.census_enabled and self.census_api_key.strip())
+
+    @property
+    def vision_configured(self) -> bool:
+        """True when the Google Vision proxy can operate (needs an API key)."""
+        return bool(self.vision_enabled and self.vision_api_key.strip())
+
+    @property
+    def llm_openai_model_list(self) -> list[str]:
+        """Allowlisted OpenAI model names (empty if none configured)."""
+        return [m.strip() for m in self.llm_openai_models.split(",") if m.strip()]
+
+    @property
+    def llm_anthropic_model_list(self) -> list[str]:
+        """Allowlisted Anthropic model names (empty if none configured)."""
+        return [m.strip() for m in self.llm_anthropic_models.split(",") if m.strip()]
+
+    @property
+    def llm_models(self) -> list[str]:
+        """Every allowlisted model (OpenAI first, then Anthropic), de-duped."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in self.llm_openai_model_list + self.llm_anthropic_model_list:
+            if m not in seen:
+                seen.add(m)
+                out.append(m)
+        return out
+
+    def llm_provider_for(self, model: str) -> str | None:
+        """Which provider serves `model`, or None if it isn't allowlisted."""
+        if model in self.llm_openai_model_list:
+            return "openai"
+        if model in self.llm_anthropic_model_list:
+            return "anthropic"
+        return None
+
+    @property
+    def llm_model_max_output_map(self) -> dict[str, int]:
+        """Parse LLM_MODEL_MAX_OUTPUT ('model:tokens,...') into {model: tokens}."""
+        out: dict[str, int] = {}
+        for pair in self.llm_model_max_output.split(","):
+            pair = pair.strip()
+            if not pair or ":" not in pair:
+                continue
+            name, _, tok = pair.rpartition(":")
+            name = name.strip()
+            try:
+                n = int(tok.strip())
+            except ValueError:
+                continue
+            if name and n > 0:
+                out[name] = n
+        return out
+
+    def llm_output_ceiling_for(self, model: str) -> int:
+        """Effective output-token ceiling for `model`.
+
+        The global cap, further lowered to the model's own limit when one is known,
+        so we never send a max_tokens a provider will reject.
+        """
+        ceiling = self.llm_max_output_tokens
+        per_model = self.llm_model_max_output_map.get(model)
+        if per_model and per_model > 0:
+            return min(ceiling, per_model) if ceiling > 0 else per_model
+        return ceiling
+
+    @property
+    def llm_reasoning_model_list(self) -> list[str]:
+        """Explicitly-configured reasoning model names (beyond the auto-detected ones)."""
+        return [m.strip() for m in self.llm_reasoning_models.split(",") if m.strip()]
+
+    def llm_is_reasoning(self, model: str) -> bool:
+        """True for models that reason before answering (need a min output budget)."""
+        m = (model or "").lower()
+        if m.startswith(("gpt-5", "o1", "o3", "o4")):
+            return True
+        return model in self.llm_reasoning_model_list
+
+    @property
+    def llm_configured(self) -> bool:
+        """True when the LLM proxy can operate (enabled + at least one usable provider)."""
+        if not self.llm_enabled:
+            return False
+        has_openai = bool(self.llm_openai_api_key.strip() and self.llm_openai_model_list)
+        has_anthropic = bool(
+            self.llm_anthropic_api_key.strip() and self.llm_anthropic_model_list
+        )
+        return has_openai or has_anthropic
 
     @property
     def sources(self) -> dict[str, dict]:

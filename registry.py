@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS apps (
     published_at TEXT,
     access_list  TEXT NOT NULL DEFAULT '[]',
     s3_source    TEXT NOT NULL DEFAULT '',
-    category     TEXT NOT NULL DEFAULT 'Other'
+    category     TEXT NOT NULL DEFAULT 'Other',
+    icon         TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -48,6 +49,8 @@ def _connect() -> sqlite3.Connection:
         conn.execute("ALTER TABLE apps ADD COLUMN s3_source TEXT NOT NULL DEFAULT ''")
     if "category" not in cols:
         conn.execute("ALTER TABLE apps ADD COLUMN category TEXT NOT NULL DEFAULT 'Other'")
+    if "icon" not in cols:
+        conn.execute("ALTER TABLE apps ADD COLUMN icon TEXT NOT NULL DEFAULT ''")
     return conn
 
 
@@ -74,33 +77,42 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 
 # ---- sync core (run in a thread from async callers) ----
 def _create(slug, title, description, datasource, html, created_by,
-            access_list=None, s3_source="", category="Other") -> None:
+            access_list=None, s3_source="", category="Other", icon="") -> None:
     with _connect() as conn:
         if conn.execute("SELECT 1 FROM apps WHERE slug=?", (slug,)).fetchone():
             raise ValueError(f"App slug '{slug}' already exists")
         now = _now()
         conn.execute(
             "INSERT INTO apps (slug, title, description, datasource, html, status, "
-            "created_by, created_at, updated_at, access_list, s3_source, category) "
-            "VALUES (?,?,?,?,?, 'draft', ?, ?, ?, ?, ?, ?)",
+            "created_by, created_at, updated_at, access_list, s3_source, category, icon) "
+            "VALUES (?,?,?,?,?, 'draft', ?, ?, ?, ?, ?, ?, ?)",
             (slug, title, description, datasource, html, created_by, now, now,
              json.dumps(_norm_access(access_list)), s3_source or "",
-             category or "Other"),
+             category or "Other", icon or ""),
         )
 
 
 def _update(slug, title, description, datasource, html, access_list,
-            s3_source="", category="Other") -> None:
+            s3_source="", category="Other", icon="") -> None:
     with _connect() as conn:
         if not conn.execute("SELECT 1 FROM apps WHERE slug=?", (slug,)).fetchone():
             raise ValueError(f"App slug '{slug}' not found")
         conn.execute(
             "UPDATE apps SET title=?, description=?, datasource=?, html=?, "
-            "access_list=?, s3_source=?, category=?, updated_at=? WHERE slug=?",
+            "access_list=?, s3_source=?, category=?, icon=?, updated_at=? WHERE slug=?",
             (title, description, datasource, html,
              json.dumps(_norm_access(access_list)), s3_source or "",
-             category or "Other", _now(), slug),
+             category or "Other", icon or "", _now(), slug),
         )
+
+
+def _set_icon(slug, icon) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE apps SET icon=?, updated_at=? WHERE slug=?",
+            (icon or "", _now(), slug),
+        )
+        return cur.rowcount > 0
 
 
 def _set_category(slug, category) -> bool:
@@ -117,6 +129,15 @@ def _set_access(slug, access_list) -> bool:
         cur = conn.execute(
             "UPDATE apps SET access_list=?, updated_at=? WHERE slug=?",
             (json.dumps(_norm_access(access_list)), _now(), slug),
+        )
+        return cur.rowcount > 0
+
+
+def _set_owner(slug, email) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE apps SET created_by=?, updated_at=? WHERE slug=?",
+            ((email or "").strip().lower(), _now(), slug),
         )
         return cur.rowcount > 0
 
@@ -181,20 +202,20 @@ async def init_registry() -> None:
 
 
 async def create_app(slug, title, description, datasource, html, created_by,
-                     access_list=None, s3_source="", category="Other"):
+                     access_list=None, s3_source="", category="Other", icon=""):
     result = await asyncio.to_thread(
         _create, slug, title, description, datasource, html, created_by,
-        access_list, s3_source, category
+        access_list, s3_source, category, icon
     )
     await _record_history("create", slug)
     return result
 
 
 async def update_app(slug, title, description, datasource, html, access_list,
-                     s3_source="", category="Other"):
+                     s3_source="", category="Other", icon=""):
     result = await asyncio.to_thread(
         _update, slug, title, description, datasource, html, access_list,
-        s3_source, category
+        s3_source, category, icon
     )
     await _record_history("update", slug)
     return result
@@ -207,8 +228,22 @@ async def set_category(slug, category) -> bool:
     return ok
 
 
+async def set_icon(slug, icon) -> bool:
+    ok = await asyncio.to_thread(_set_icon, slug, icon)
+    if ok:
+        await _record_history("update", slug)
+    return ok
+
+
 async def set_access(slug, access_list) -> bool:
     ok = await asyncio.to_thread(_set_access, slug, access_list)
+    if ok:
+        await _record_history("update", slug)
+    return ok
+
+
+async def set_owner(slug, email) -> bool:
+    ok = await asyncio.to_thread(_set_owner, slug, email)
     if ok:
         await _record_history("update", slug)
     return ok

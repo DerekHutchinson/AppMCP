@@ -13,6 +13,7 @@
       "get_authoring_guide",
       "get_app_theme",
       "list_categories",
+      "list_icons",
       "check_app",
       "create_app",
       "update_app",
@@ -21,6 +22,7 @@
       "publish_app",
       "unpublish_app",
       "list_apps",
+      "get_app",
       "get_app_url"
     ],
     "viewer": []

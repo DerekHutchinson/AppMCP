@@ -10,6 +10,8 @@ web app on the same FastAPI application:
   * App email (SendGrid)             ->  /a/{slug}/email
   * App Microsoft Graph (delegated)  ->  /a/{slug}/graph
   * App U.S. Census Data API         ->  /a/{slug}/census
+  * App LLM chat (OpenAI/Anthropic)  ->  /a/{slug}/llm
+  * App Google Vision (annotate)     ->  /a/{slug}/vision
   * App S3 objects (list/get)        ->  /a/{slug}/s3
   * Author/admin manage UI           ->  /manage
   * Browser session login            ->  /login, /auth/callback, /logout
@@ -38,10 +40,31 @@ import session_auth
 import tool_access
 from config import settings
 from tools import apps_admin, data_explore
-from web import census, email, graph, home, manage, proxy, s3, serve
+from web import census, email, graph, home, llm, manage, proxy, s3, serve, vision
 
 # ---- MCP server + tool registration ----
-mcp = FastMCP("AppMCP App Publisher")
+_MCP_INSTRUCTIONS = """\
+AppMCP App Publisher: build and publish self-contained HTML apps/dashboards to
+an internal, Azure-AD-gated catalog, and explore the data sources that power them.
+
+WHEN TO BUILD AN APP — do this ONLY when the user explicitly asks to create,
+build, make, or publish an "app" or "dashboard" (e.g. "make an app that…",
+"build a dashboard for…", "publish this as an app"). Building an app means
+authoring HTML and calling create_app/publish_app.
+
+AVOID DUPLICATES — before building, call list_apps to see what already exists.
+If an equivalent app is already published, point the user to its URL (or update
+it via update_app) instead of creating another copy.
+
+Do NOT create, author, or publish an app on your own initiative. If the user
+only asks a data question, wants a number/table/analysis, or asks you to explore
+or explain something, answer it directly using the data-exploration tools
+(list_datasources, list_schemas/tables/columns, run_query, census_query, etc.)
+and reply in chat. Do not treat "show me…", "what are…", "analyze…", or similar
+as a request to build an app. When it is ambiguous whether the user wants a
+one-off answer or a durable published app, ask before building one.
+"""
+mcp = FastMCP("AppMCP App Publisher", instructions=_MCP_INSTRUCTIONS)
 data_explore.register(mcp)
 apps_admin.register(mcp)
 
@@ -88,6 +111,8 @@ if settings.auth_enabled or settings.local_dev_bypass:
     email.register(web_router)
     graph.register(web_router)
     census.register(web_router)
+    llm.register(web_router)
+    vision.register(web_router)
     s3.register(web_router)
     manage.register(web_router)
     app.include_router(web_router)

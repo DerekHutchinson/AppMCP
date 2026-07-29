@@ -3,6 +3,32 @@
 You are building a **single, self-contained HTML document** that will be served
 at a permanent, authenticated URL. Follow these rules and it will work.
 
+## First, check for an existing app
+
+Before building anything, call the `list_apps` MCP tool and scan the results for
+an app that already does what the user wants (compare title + description +
+category + datasource — match on intent, not just an exact title). If a close
+match already exists, **don't recreate it**: point the user to that app's `url`,
+or offer to extend the existing one with `update_app`. Only build a new app when
+nothing equivalent is published.
+
+## Editing an existing app (no prior context)
+
+When the user asks you to change an app you didn't just build (another agent,
+another chat, or another author who transferred it to you), pull the source
+first:
+
+1. `list_apps` — find the slug (and confirm you're the owner, or you're an admin).
+2. `get_app(slug)` — returns the full stored HTML plus metadata (title,
+   description, datasource, category, icon, access). Only the owner or an admin
+   can call this.
+3. Edit the returned `html` (and any metadata fields you need to change).
+4. `update_app(slug, html=..., …)` — save. If it was already published, the
+   live catalog URL updates; no need to recreate the app.
+
+Do **not** export/paste HTML by hand when `get_app` is available. Do **not**
+create a second app that duplicates the first.
+
 ## Start from the default theme
 
 **By default, base every new app on the default dashboard theme.** Call the
@@ -16,8 +42,8 @@ custom look** (their own layout, colors, or branding). In that case, build to
 their spec.
 
 **Always include the logo.** The logo is served from this origin
-at `/static/logo.png` — reference it with a plain `<img>` (allowed by the app
-CSP, `img-src 'self'`):
+at `/static/logo.png` — reference it with a plain `<img>` (same-origin, so
+allowed by the app CSP's `img-src 'self' data: https:`):
 
 ```html
 <img src="/static/logo.png" alt="Logo" style="max-width:280px;height:auto" />
@@ -80,6 +106,60 @@ for await (const page of AppData.queryPages(sql, params)) {
 - You can tune per call: `AppData.query(sql, params, { maxRows: 5000 })` to cap
   the auto-fetch, or `{ pageSize: 500 }` to change the chunk size.
 
+### Rendering large result sets (don't crash the browser)
+
+Fetching data safely is only half the job — **rendering** it is the other half,
+and it's the most common way an AI-built app freezes or crashes the tab. The
+trap is building a DOM whose size grows with the row count: one `<tr>` (or card)
+per row for thousands of rows. A few thousand rows × several cells is tens of
+thousands of DOM nodes, which pegs memory/CPU and kills the tab.
+
+**Hard rule: the number of DOM nodes you create must not scale with the number
+of rows.** Keep what's on screen bounded no matter how large the result is.
+
+Do this:
+
+- **Aggregate in SQL for summaries/dashboards** (`GROUP BY`/`SUM`/`COUNT`) so the
+  browser renders a handful of rows, not the raw detail.
+- **Use a paginating/virtualizing grid for row listings.** Grid.js with
+  `pagination: { limit: 25 }` renders only the current page's DOM even when you
+  hand it every row — a safe default for tabular data.
+- **Expand hierarchical rollups lazily.** For a Rep → Customer → Division tree,
+  render the top level and build a branch's children only when the user expands
+  it (and remove them on collapse).
+- **Render heavy/secondary tabs only when opened**, not eagerly on every refresh.
+  Building a hidden tab's giant table is a frequent cause of "it crashes even
+  though I never opened that screen."
+- **Cap + label** when a raw list is unavoidable: show the first N rows with a
+  "showing N of M" note (`AppData.query(sql, params, { maxRows: 500 })`), or
+  stream with `queryPages()` and stop appending past a cap.
+
+Avoid (each builds unbounded DOM):
+
+```js
+// one node per row, all at once => thousands of rows crash the tab
+let html = '';
+for (const r of rows) html += `<tr><td>${r.a}</td><td>${r.b}</td></tr>`;
+el.innerHTML = html;
+
+// same problem, different spellings
+el.innerHTML = rows.map(r => `<tr>...</tr>`).join('');
+rows.forEach(r => el.innerHTML += `<tr>...</tr>`);
+```
+
+```js
+// hand the rows to a paginating grid instead (bounded DOM)
+new gridjs.Grid({
+  columns: ['A', 'B'],
+  data: rows.map(r => [r.a, r.b]),
+  pagination: { limit: 25 }, search: true, sort: true
+}).render(el);
+```
+
+The publish-time check (`check_app`) warns when it sees markup accumulated in a
+loop and assigned to `innerHTML`; treat that warning as a prompt to switch to one
+of the bounded patterns above.
+
 `AppData` is injected by the server at serve time — you do **not** define it, and
 you do **not** know or need the datasource name inside the app (when a datasource
 is set, the server pins the app to the one chosen in `create_app`). If the app
@@ -113,6 +193,16 @@ Marketing, Reports, Tools, Demo**, with **Other** as the fallback. Pick the clos
 match; an unrecognized value is normalized to "Other". You can change it later
 with `update_app(category=...)` (or an author can edit it in `/manage`).
 
+## Give your app an icon
+
+Each catalog card shows a small icon. Pass an `icon` name to `create_app`
+(e.g. `icon="chart-line"` for a trend dashboard, `"gem"` for a product app,
+`"truck"` for logistics). Call `list_icons` for the available names — they come
+from a curated SVG set, so pick the closest fit. If you omit `icon` or pass an
+unknown name, an icon is auto-chosen from the app's category, so setting it is
+optional but makes the catalog easier to scan. Change it later with
+`update_app(icon=...)` or in `/manage`.
+
 ## Who can view the app
 
 By default a published app is visible to any signed-in org user. To restrict it,
@@ -131,9 +221,15 @@ The page is served under a strict CSP. Design around it:
 3. **Scripts** run from your inline `<script>` blocks or these CDNs only:
    `cdn.jsdelivr.net`, `cdnjs.cloudflare.com`, `unpkg.com`. Native HTML controls
    (`<select>`, `<input type="date">`) need no library.
-4. **Network:** the page may only call back to its own origin (i.e. `AppData`).
-   It cannot fetch arbitrary external URLs.
-5. Inline `<style>` and `style="..."` are allowed.
+4. **Network (fetch/XHR) is same-origin only** (`connect-src 'self'`): use the
+   `AppData` helpers. You cannot `fetch()` arbitrary external URLs. (This limits
+   only fetch/XHR — scripts, images, and fonts have their own rules below.)
+5. **Images** (`img-src 'self' data: https:`): same-origin files (e.g.
+   `/static/logo.png`), `data:` URLs, and any `https:` image URL are allowed.
+   `blob:` URLs are **not** — preview an uploaded file with a `data:` URL
+   (`FileReader.readAsDataURL`), not `URL.createObjectURL`.
+6. **Fonts** (`font-src 'self' https: data:`).
+7. Inline `<style>` and `style="..."` are allowed.
 
 ## Filters, dropdowns, and date pickers
 
@@ -150,6 +246,12 @@ calendar picker — so you need no external library. Wire them with
 `addEventListener` (never inline `onchange`).
 
 ## Minimal working template
+
+This bare example exists to show the **mechanics** — the `AppData.query` data
+contract, `params`, and filter wiring — **not** the look. For real apps, still
+start from `get_app_theme` (see the top of this guide); use this only as a
+reference for how the pieces connect, or for a deliberately minimal/custom page
+the user asked for.
 
 A complete app with a dropdown + date-range filter that re-queries on demand:
 
@@ -248,7 +350,8 @@ silently fails:
 - **No Web Workers**, so **Mapbox GL JS / MapLibre GL do not work** here
   (`default-src 'none'`). Use SVG-based rendering (D3) instead.
 - Leaflet with raster tiles can render (tiles are `<img>`, allowed by
-  `img-src https:`), but for a data choropleth prefer the D3 approach below.
+  `img-src 'self' data: https:`), but for a data choropleth prefer the D3
+  approach below.
 
 **Hosted geometry files** (all under `/static/`, fetch with `d3.json`):
 
@@ -596,19 +699,198 @@ Constraints (enforced server-side):
   supported by the dataset, rate limit), so handle failures in the UI.
 - If Census isn't configured on the server, the call fails with a clear error.
 
+## Using an LLM (text generation & data processing)
+
+Apps can call a server-side LLM (OpenAI or Anthropic) through `AppData.llm(opts)`
+to summarize, classify, extract, or generate text. Like the other helpers it
+posts to the app's own origin (`/a/{slug}/llm`); the server holds the API key and
+the app never sees it. This is a **shared capability** (like email/Census) — it
+needs no per-app binding and works in any app. Test a prompt first with the
+`llm_ask` MCP tool, and see available models with `list_llm_models`.
+
+```js
+// Simplest form: a system instruction + a prompt string.
+const out = await AppData.llm({
+  system: "You are a concise retail analyst. Answer only from the data given.",
+  prompt: "One-sentence takeaway from this data:\n" + JSON.stringify(rows),
+  maxTokens: 200
+});
+console.log(out.text);          // the model's reply
+// out -> { text, model, provider, usage: { input_tokens, output_tokens } }
+
+// Multi-turn: pass a messages array instead of prompt.
+const chat = await AppData.llm({
+  system: "You are a helpful assistant.",
+  messages: [
+    { role: "user", content: "List 3 risks in this pipeline." },
+    { role: "assistant", content: "1. ..." },
+    { role: "user", content: "Now rank them." }
+  ],
+  model: "gpt-4o-mini"          // optional; must be on the allowlist
+});
+
+// Structured output: ask for JSON and parse it.
+const res = await AppData.llm({
+  system: "Extract fields. Reply with JSON only.",
+  prompt: "Order: 2x widget, ship to NY. Return {items:[{name,qty}], state}.",
+  json: true                    // requests a strict JSON object
+});
+const parsed = JSON.parse(res.text);
+
+// Multimodal: attach images and/or a PDF. Pass a File/Blob from an <input>, a
+// data URL, or bare base64 — the helper encodes it for you.
+const pic = document.getElementById("photo").files[0];   // <input type="file">
+const vision = await AppData.llm({
+  model: "gpt-5.2",                          // must be a vision-capable model
+  prompt: "Describe what's in this photo and read any visible text.",
+  images: [pic]                              // array; also accepts data URLs
+});
+
+// Images may also be a public http(s) URL — the SERVER fetches it and inlines it
+// (images only; files must be base64). Pass a string or { url: "..." }.
+const fromUrl = await AppData.llm({
+  model: "gpt-5.2",
+  prompt: "Describe this product photo.",
+  images: ["https://example.com/product.jpg"]
+});
+
+const doc = document.getElementById("pdf").files[0];
+const summary = await AppData.llm({
+  model: "claude-sonnet-5",
+  prompt: "Summarize this report in 5 bullets.",
+  files: [doc]                               // PDFs only
+});
+```
+
+`opts`: `system` (string instruction), and **either** `prompt` (a string → one
+user message) **or** `messages` (array of `{role, content}` with roles
+`user`/`assistant`). Optional: `model` (from `list_llm_models`; omit for the
+server default), `temperature` (0–2; **ignored by reasoning models** such as
+`gpt-5.2`), `maxTokens` (output length), `json` (`true` to request a JSON
+object — the server strips any wrapping ```` ```json ```` fence so `res.text` is
+directly `JSON.parse`-able), and `images`/`files` (attachments — see below). The
+provider is chosen from the model name — you don't pick OpenAI vs Anthropic directly.
+
+> **Reasoning models** (e.g. `claude-sonnet-5`, `gpt-5.2`) spend output tokens
+> thinking before they answer. The server enforces a minimum output budget for
+> them, so a small `maxTokens` won't come back empty — but if you need a long
+> answer, still set `maxTokens` generously.
+
+**Attachments (`images` / `files`):** both are arrays. Each item can be a
+`File`/`Blob` (e.g. from `<input type="file">`), a `data:` URL, or bare base64 —
+the helper base64-encodes it and sends it inline (nothing is fetched *by the
+app*, so the CSP is unaffected). `images` accepts PNG/JPEG/GIF/WebP and needs a
+**vision-capable model** (`gpt-4o`, `gpt-4o-mini`, `gpt-5.2`, or
+`claude-sonnet-5`); `files` accepts **PDF only**. For full control you can also
+put typed parts directly in a message: `content: [{type:"text",text:"..."},
+{type:"image",data:"<base64>",media_type:"image/png"}]`.
+
+**Image URLs (images only):** an `images` item may also be an `http(s)` URL
+string (or `{url:"https://..."}`) — the **server** fetches it, converts it to
+base64, and forwards it. This is images-only (files must be inline base64) and
+the URL must be a public, direct link to a supported image type. Example:
+`AppData.llm({ model:"gpt-5.2", prompt:"What's this?", images:["https://example.com/pic.jpg"] })`.
+
+**Choosing a model:** omit `model` to use the cheap, fast default. Only name a
+stronger model (e.g. `gpt-5.2` or `claude-sonnet-5`) when the task genuinely
+needs deeper reasoning — the exact list is whatever `list_llm_models` returns, so
+don't hardcode a model that might not be allowlisted.
+
+Constraints (enforced server-side):
+
+- **Model allowlist.** Only server-approved models are accepted; an unknown model
+  is rejected. Call `list_llm_models` to see them and the default.
+- **Output is capped.** `maxTokens` is clamped to a server ceiling (cost guard),
+  which is also the default when you don't set one — keep replies short.
+- **Input is capped.** The combined `system` + messages length is limited; send
+  aggregated/summarized data, not tens of thousands of raw rows. Pull data with
+  `AppData.query` (aggregate in SQL), then pass a compact slice to the model.
+- **Attachments are bounded.** Images must be PNG/JPEG/GIF/WebP and files must be
+  PDF; there's a per-call attachment count and a total request-size cap (base64
+  inflates ~33%, so downscale large images on a `<canvas>` first). Images require
+  a vision-capable model, or the provider rejects the call.
+- **Image URLs are fetched server-side and size-capped.** They must be public,
+  direct links to a supported image (the server blocks internal/private hosts and
+  non-image responses); if a URL fails these checks the call throws.
+- **Rate limited.** A per-session per-minute cap applies; `AppData.llm` **throws**
+  on any error (bad model, oversized prompt, rate limit), so handle failures.
+- **Treat output as untrusted text.** Render it as text content, never inject it
+  as HTML, and never put secrets in the prompt. For strict JSON, set `json: true`
+  and still wrap `JSON.parse` in a try/catch.
+- If the LLM proxy isn't configured on the server, the call fails with a clear error.
+
+## Image analysis (Google Vision)
+
+Analyze images — labels, OCR/text, objects, logos, faces, safe-search, etc. — with
+`AppData.vision(...)`. The app sends the image **bytes** (no key in the app); the
+server forwards them to the Google Vision API and returns the annotations. The
+image never leaves same-origin from the app's point of view, so the strict CSP is
+unchanged (`connect-src 'self'`).
+
+```js
+// From a file input: <input type="file" id="pic" accept="image/*">
+const file = document.getElementById("pic").files[0];
+const out = await AppData.vision({
+  image: file,                                   // File/Blob, data URL, or base64
+  features: [
+    { type: "LABEL_DETECTION", maxResults: 10 },
+    "TEXT_DETECTION"                             // shorthand: just the type
+  ]
+});
+const r = out.responses[0];
+const labels = (r.labelAnnotations || []).map(l => l.description + " (" + (l.score * 100).toFixed(0) + "%)");
+const text = (r.fullTextAnnotation && r.fullTextAnnotation.text) || "";
+```
+
+`opts`: either `{image, features, imageContext?}` for one image, or
+`{requests: [...]}` to batch several (each `{image, features, imageContext?}`).
+`image` accepts a `File`/`Blob` (converted to base64 in the browser), a data URL,
+or bare base64. `features` is a type string, an array of type strings, or an array
+of `{type, maxResults}`. Returns the raw Vision response: `{ responses: [ ... ] }`
+(one entry per image, e.g. `labelAnnotations`, `textAnnotations`,
+`localizedObjectAnnotations`, `faceAnnotations`, `safeSearchAnnotation`).
+
+Valid feature types: `LABEL_DETECTION`, `TEXT_DETECTION`, `DOCUMENT_TEXT_DETECTION`,
+`FACE_DETECTION`, `LANDMARK_DETECTION`, `LOGO_DETECTION`, `SAFE_SEARCH_DETECTION`,
+`IMAGE_PROPERTIES`, `CROP_HINTS`, `WEB_DETECTION`, `OBJECT_LOCALIZATION`,
+`PRODUCT_SEARCH`.
+
+Constraints (enforced server-side):
+
+- **Inline image bytes only.** Remote `source`/`imageUri` fetches are rejected —
+  read the file in the browser and send its content.
+- **Size-capped uploads.** Large images are rejected (base64 inflates ~33%);
+  downscale big photos on a `<canvas>` before sending if needed. Batches are
+  limited (max images per call) and a per-session per-minute rate limit applies.
+- **Preview the image with a `data:` URL** from `FileReader.readAsDataURL` —
+  that's allowed by the CSP (`img-src 'self' data: https:`). Do **not** use
+  `URL.createObjectURL`: its `blob:` URL is blocked by the CSP. Never fetch a
+  third-party image URL from the app.
+- `AppData.vision` **throws** on any error (bad feature, oversized image, rate
+  limit), so handle failures in the UI.
+- If Vision isn't configured on the server, the call fails with a clear error.
+
 ## Checklist before publishing
 
+- [ ] Checked `list_apps` first — no equivalent app already exists (else point the
+      user to it or update it instead of publishing a duplicate).
 - [ ] Started from the default theme (`get_app_theme`) unless the user asked for a
       custom look, and the logo (`/static/logo.png`) is included.
 - [ ] If the app uses a datasource: data is loaded live via `AppData.query()` on
       load and on every filter change — **no result rows baked into the HTML**.
       (Static apps with no datasource are exempt.)
 - [ ] Ran `check_app(html)` and cleared its errors (and reviewed warnings).
+- [ ] Set a fitting `category` (see `list_categories`) and `icon` (see
+      `list_icons`) so the catalog card is well-placed and scannable. Both are
+      optional — omit `icon` and one is auto-picked from the category.
+- [ ] Rendering is bounded: DOM size does not scale with row count — summaries
+      aggregate in SQL, row listings use a paginating grid (e.g. Grid.js), and
+      hierarchical/heavy views expand or load lazily (no `innerHTML +=` per row).
 - [ ] All SQL is a single read-only SELECT with schema-qualified tables.
 - [ ] User inputs flow through `params` (`$1..$n`), never string-concatenated.
 - [ ] No inline `on*=` handlers; listeners attached via `addEventListener`.
-- [ ] Loading + error states handled (`AppData.query`/`AppData.sendEmail` throw
-      on failure).
+- [ ] Loading + error states handled (every `AppData.*` helper — `query`,
+      `sendEmail`, `graph`, `s3`, `census`, `vision` — throws on failure).
 - [ ] If sending email: recipients are internal (`@example.com`), subject +
       body set, and data values are escaped in the message.
 - [ ] If using Graph: calls are `/me`-scoped and on the allowlist, reads use
@@ -618,6 +900,14 @@ Constraints (enforced server-side):
 - [ ] If using Census: dataset/year/variables are valid (checked with
       `census_query`), the request is narrowed with `for`/`in`, values are cast
       from strings with `Number(...)`, and errors are handled.
+- [ ] If using an LLM: the model is on the allowlist (or omitted for the default),
+      the prompt sends aggregated/compact data (not raw dumps), output is rendered
+      as text (not HTML), `json:true` output is `JSON.parse`d in a try/catch, and
+      errors are handled. If attaching `images`/`files`: a vision-capable model is
+      used for images, files are PDFs, and large images are downscaled first.
+- [ ] If using Vision: images are sent as inline bytes (File/Blob/data URL),
+      large images are downscaled before upload, valid feature types are used, and
+      errors are handled.
 - [ ] Verified each query with the `run_query` tool.
 - [ ] For maps: geometry comes from this origin (`/static/us-states-10m.json`)
       or is inlined — never fetched from an external CDN; no Web Workers / Mapbox

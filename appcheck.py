@@ -14,6 +14,11 @@ These heuristics run inside ``create_app``/``update_app`` and are exposed via th
 The signals are intentionally conservative to avoid false positives on
 legitimate inline reference data (lookup maps, map geometry/TopoJSON), which are
 nested-number arrays or single objects rather than large arrays of row objects.
+
+We also warn on a separate failure mode: **unbounded DOM rendering** — building
+markup in a loop and assigning it to ``innerHTML`` (one node per row), which
+crashes the browser on large result sets. The fix is a bounded render (aggregate
+in SQL, a paginating grid, or lazy expansion); see the authoring guide.
 """
 import re
 
@@ -31,9 +36,40 @@ _INLINE_HANDLER_RE = re.compile(r"<[^>]+\son[a-z]+\s*=\s*[\"']", re.IGNORECASE)
 # eval / new Function — blocked by the app CSP.
 _EVAL_RE = re.compile(r"\b(?:eval|new\s+Function)\s*\(", re.IGNORECASE)
 
+# Unbounded-DOM rendering smells: markup built in a loop and dropped into
+# innerHTML. Rendering one node per row crashes the tab on large result sets.
+# These are intentionally specific (a computed blob assigned/appended to
+# innerHTML) so they don't fire on bounded single-template assignments
+# (`el.innerHTML = ` + "<table>…one row…</table>") or on paginating grids like
+# Grid.js (whose data is JS objects, not `<tr>` strings).
+_INNERHTML_APPEND_RE = re.compile(r"\.innerHTML\s*\+=")
+_INNERHTML_MAPJOIN_RE = re.compile(
+    r"\.innerHTML\s*=\s*[^;]*\.map\s*\([^;]*\.join\s*\(", re.DOTALL
+)
+_INNERHTML_VAR_RE = re.compile(r"\.innerHTML\s*=\s*([A-Za-z_$][\w$]*)\s*;")
+_INNERHTML_JOINVAR_RE = re.compile(r"\.innerHTML\s*=\s*([A-Za-z_$][\w$]*)\s*\.join\s*\(")
+
 # Estimated row count (object-separator count + 1) thresholds for a single doc.
 WARN_BAKED_ROWS = 15
 FAIL_BAKED_ROWS = 60
+
+
+def _looks_unbounded_render(html: str) -> bool:
+    """True when the HTML builds markup in a loop and assigns it to innerHTML.
+
+    Catches `el.innerHTML += ...`, `el.innerHTML = rows.map(...).join(...)`, and
+    the accumulate-then-assign form (`let h=''; ... h += `<tr>…`; el.innerHTML = h`)
+    including the array `push`/`join` variant.
+    """
+    if _INNERHTML_APPEND_RE.search(html) or _INNERHTML_MAPJOIN_RE.search(html):
+        return True
+    for m in _INNERHTML_VAR_RE.finditer(html):
+        if re.search(r"\b" + re.escape(m.group(1)) + r"\s*\+=", html):
+            return True
+    for m in _INNERHTML_JOINVAR_RE.finditer(html):
+        if re.search(r"\b" + re.escape(m.group(1)) + r"\s*\.push\s*\(", html):
+            return True
+    return False
 
 
 def check_html(html: str, has_datasource: bool = True) -> dict:
@@ -78,6 +114,18 @@ def check_html(html: str, has_datasource: bool = True) -> dict:
                 "If it displays data, load it live via AppData.query() rather than "
                 "baking it into the HTML. (Ignore this if the app has no data or "
                 "was not meant to use a datasource.)"
+            )
+
+        if _looks_unbounded_render(html):
+            warnings.append(
+                "This app builds markup in a loop and assigns it to innerHTML "
+                "(e.g. `el.innerHTML = html` after `html += ...`, or "
+                "`rows.map(...).join('')`). Rendering one DOM node per row can "
+                "freeze or crash the browser on large result sets. Render a bounded "
+                "view instead: aggregate in SQL for summaries, use a paginating grid "
+                "(e.g. Grid.js with pagination) for row listings, and expand "
+                "hierarchical/heavy views lazily. See 'Rendering large result sets' "
+                "in the authoring guide."
             )
 
     if _INLINE_HANDLER_RE.search(html):
